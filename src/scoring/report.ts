@@ -9,6 +9,7 @@
 
 import { readFileSync, statSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { ALL_CAPABILITIES } from "../capabilities.js";
 import { scoreCapability, type CapabilityResult, type FunctionScore } from "./capability-scorer.js";
 import { scoreLooseness, type LoosenessResult } from "./looseness-scorer.js";
 
@@ -308,14 +309,66 @@ function printPretty(results: FileResult[]) {
   if (undeclaredFns.length > 0) process.exit(1);
 }
 
+// ── JSON 输出（--json） ──
+
+function printJSON(results: FileResult[]) {
+  const s = summarize(results);
+
+  function computeFnScore(fn: FunctionScore): number {
+    const capCount = fn.declared ? (fn.caps.length || 0) : ALL_CAPABILITIES.length;
+    return Math.round(fn.weightedStatements * capCount * 10) / 10;
+  }
+
+  const output = {
+    summary: {
+      files: results.length,
+      functions: s.totalFunctions,
+      pure: s.totalPure,
+      undeclared: s.totalUndeclared,
+      capabilityBurden: Math.round(s.totalCap * 10) / 10,
+      typeLooseness: s.totalLoose,
+      capScores: s.capScores,
+      looseByType: s.looseByType,
+    },
+    files: results.map(r => ({
+      file: r.file,
+      capability: {
+        total: r.capability.total,
+        capScores: r.capability.capScores,
+        functions: r.capability.functions
+          .map(fn => ({
+            name: fn.name,
+            line: fn.line,
+            caps: fn.caps,
+            declared: fn.declared,
+            statements: fn.statements,
+            weightedStatements: fn.weightedStatements,
+            score: computeFnScore(fn),
+          }))
+          .sort((a, b) => b.score - a.score),
+      },
+      looseness: {
+        total: r.looseness.total,
+        signals: r.looseness.signals,
+      },
+    })),
+    tips: generateTips(results, s).map(t => t.text),
+  };
+
+  console.log(JSON.stringify(output, null, 2));
+
+  if (s.totalUndeclared > 0) process.exit(1);
+}
+
 // ── 入口 ──
 
 const args = process.argv.slice(2);
 const pretty = args.includes("--pretty");
-const targets = args.filter(a => a !== "--pretty");
+const json = args.includes("--json");
+const targets = args.filter(a => !a.startsWith("--"));
 
 if (targets.length === 0) {
-  console.error("Usage: capability-report [--pretty] <file-or-dir> [file-or-dir...]");
+  console.error("Usage: capability-report [--pretty | --json] <file-or-dir> [file-or-dir...]");
   process.exit(1);
 }
 
@@ -326,7 +379,9 @@ if (files.length === 0) {
 }
 
 const results = files.map(scoreFile);
-if (pretty) {
+if (json) {
+  printJSON(results);
+} else if (pretty) {
   printPretty(results);
 } else {
   printLLM(results);
