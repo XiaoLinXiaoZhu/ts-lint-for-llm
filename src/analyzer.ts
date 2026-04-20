@@ -74,7 +74,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         kind: DiagnosticKind.FallibleMismatch,
         functionId: id, functionName: fn.name,
         filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 返回类型包含 null/undefined，已自动标记为 Fallible。如不需要此标记，请将 null/undefined 返回改为显式的错误结构体。`,
+        message: `'${fn.name}' 返回类型包含 null/undefined，已自动标记为 Fallible。如不需要此标记，请将 null/undefined 返回改为显式的错误结构体（如 { success: false, error: "reason" }），用确定的类型替代空值。`,
       });
     }
     if (!fn.isDeclared) {
@@ -82,7 +82,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         kind: DiagnosticKind.Undeclared,
         functionId: id, functionName: fn.name,
         filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 未声明能力，被视为全能力函数。请添加 @capability 标注。`,
+        message: `'${fn.name}' 未声明能力，被视为全能力函数。请添加能力后缀（如 fetchUser_IO_Async）或 @capability 标注（纯函数用空 @capability）。`,
       });
     }
     effectiveCaps.set(id, caps);
@@ -114,7 +114,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
           functionId: id, functionName: fn.name,
           filePath: fn.filePath, line: fn.line,
           callee: calleeName,
-          message: `'${fn.name}' 调用了未注册函数 '${calleeName}'，无法验证能力。`,
+          message: `'${fn.name}' 调用了未注册函数 '${calleeName}'，无法验证能力。请确认该函数的能力声明，或将其添加到内置声明表。`,
         });
       }
     }
@@ -155,13 +155,29 @@ function checkCall(
   }
 
   if (absorbed.length > 0 && missing.length === 0) {
-    diagnostics.push({
-      kind: DiagnosticKind.Absorbed,
-      functionId: caller.id, functionName: caller.name,
-      filePath: caller.filePath, line: caller.line,
-      callee: calleeName,
-      absorbedCaps: absorbed,
-      message: `'${caller.name}' 调用了 ${absorbed.join("+")} 函数 '${calleeName}'，但未声明相应能力。`,
-    });
+    const hasFallible = absorbed.includes("Fallible" as Capability);
+    const hasAsync = absorbed.includes("Async" as Capability);
+    
+    if (hasFallible) {
+      diagnostics.push({
+        kind: DiagnosticKind.Absorbed,
+        functionId: caller.id, functionName: caller.name,
+        filePath: caller.filePath, line: caller.line,
+        callee: calleeName,
+        absorbedCaps: ["Fallible" as Capability],
+        message: `'${caller.name}' 调用了 Fallible 函数 '${calleeName}'，但未声明 Fallible。若失败未被 try-catch/默认值处理，请补充 Fallible 声明；否则可将 '${calleeName}' 的空返回改为显式错误结构体（如 { success: false, error: "reason" }）。`,
+      });
+    }
+    
+    if (hasAsync) {
+      diagnostics.push({
+        kind: DiagnosticKind.Absorbed,
+        functionId: caller.id, functionName: caller.name,
+        filePath: caller.filePath, line: caller.line,
+        callee: calleeName,
+        absorbedCaps: ["Async" as Capability],
+        message: `'${caller.name}' 调用了 Async 函数 '${calleeName}'，但未声明 Async。若调用方需要 await 本函数结果，请补充 Async 声明；否则确认已通过 task/handle 或 fire-and-forget+错误处理 模式消化了异步操作。`,
+      });
+    }
   }
 }

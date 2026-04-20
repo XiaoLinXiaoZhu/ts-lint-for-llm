@@ -36,7 +36,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const format = flags.has("--json") ? "json" : flags.has("--llm") ? "llm" : "pretty";
+const format = flags.has("--pretty") ? "pretty" : flags.has("--llm") ? "llm" : "json";
 const doFix = flags.has("--fix");
 
 // 找 tsconfig

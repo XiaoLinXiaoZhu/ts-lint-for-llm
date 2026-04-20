@@ -41,6 +41,7 @@ export interface ScoreSummary {
   totalUndeclared: number;
   capScores: Partial<Record<Capability, number>>;
   looseByType: Record<string, { count: number; penalty: number }>;
+  allFunctions: FunctionScore[];
   topFunctions: FunctionScore[];
   fileScores: FileScore[];
   tips: string[];
@@ -118,7 +119,7 @@ export function computeScores(
 
   return {
     totalCap, totalLoose, totalFunctions, totalPure, totalUndeclared,
-    capScores, looseByType, topFunctions: fnScores.slice(0, 10), fileScores, tips,
+    capScores, looseByType, allFunctions: fnScores, topFunctions: fnScores.slice(0, 10), fileScores, tips,
   };
 }
 
@@ -129,25 +130,35 @@ function generateTips(
   const tips: string[] = [];
 
   if (totalUndeclared > 0) {
-    tips.push(`声明能力: ${totalUndeclared} 个函数未声明能力，按最大惩罚(×5)计分。添加 @capability 标注可立即降分。`);
+    tips.push(`声明能力: ${totalUndeclared} 个函数未声明能力，按最大惩罚(×5)计分。添加 @capability 标注（纯函数用空 @capability）可立即降分。`);
   }
 
   const maxFn = fns.find(f => f.caps.length >= 3);
   if (maxFn) {
-    tips.push(`拆分高负担函数: ${relative(process.cwd(), maxFn.filePath)}:${maxFn.line} ${maxFn.name} 携带 ${maxFn.caps.length} 个能力(${maxFn.caps.join("+")})。提取纯逻辑为独立函数可降分。`);
+    tips.push(`拆分高负担函数: ${relative(process.cwd(), maxFn.filePath)}:${maxFn.line} ${maxFn.name} 携带 ${maxFn.caps.length} 个能力(${maxFn.caps.join("+")})。考虑将纯逻辑提取为独立纯函数——纯函数得分为 0，父函数的语句数减少即可降分。注意：仅提取子能力到新函数不会降分（父函数仍需声明该能力），只有提取出「能力更少」的代码才有效。`);
   }
 
   const multiCap = fns.filter(f => f.isDeclared && f.caps.length >= 2);
   if (multiCap.length > 2) {
-    tips.push(`系统性重构: ${multiCap.length} 个函数携带 2+ 能力。考虑纯 transition + 薄 IO 层模式。`);
+    tips.push(`系统性重构: ${multiCap.length} 个函数携带 2+ 能力。考虑状态机模式（纯 transition 函数 + 薄 IO 层）或 "effect as data"，将业务逻辑集中到纯函数中。`);
   }
 
   if (totalFunctions > 3 && totalPure / totalFunctions < 0.3) {
-    tips.push(`提升纯函数占比: 当前 ${Math.round(totalPure / totalFunctions * 100)}%，收窄函数参数可减少外部能力依赖。`);
+    tips.push(`收窄接口: 纯函数占比 ${Math.round(totalPure / totalFunctions * 100)}%。将函数参数从宽接口收窄为所需的最小数据，可以减少对外部能力的依赖。`);
   }
 
   if (totalCap > 0 && totalLoose > 0) {
-    tips.push(`优先降低能力负担(${totalCap.toFixed(1)})，再处理类型松散度(${totalLoose})。`);
+    tips.push(`优化顺序: 优先降低能力负担(${totalCap.toFixed(1)})，再处理类型松散度(${totalLoose})。前者需要重构，后者只需收窄类型。`);
+  } else if (totalCap > 0 && totalLoose === 0) {
+    tips.push(`类型松散度为 0，集中精力降低能力负担(${totalCap.toFixed(1)})。`);
+  }
+
+  // 消除重复
+  const nameFreq = new Map<string, number>();
+  for (const fn of fns) nameFreq.set(fn.name, (nameFreq.get(fn.name) || 0) + 1);
+  const dupes = [...nameFreq.entries()].filter(([, c]) => c > 1).map(([n]) => n);
+  if (dupes.length > 0) {
+    tips.push(`消除重复: ${dupes.join(", ")} 在多个文件中出现。提取到共享模块可以减少总能力面积。`);
   }
 
   return tips;
@@ -223,13 +234,35 @@ export function formatPretty(result: AnalysisResult, scores: ScoreSummary, cwd: 
 export function formatJSON(result: AnalysisResult, scores: ScoreSummary, cwd: string): string {
   return JSON.stringify({
     diagnostics: result.diagnostics.map(d => ({
-      ...d, filePath: relative(cwd, d.filePath),
-      declaredCaps: undefined, effectiveCaps: undefined,
+      kind: d.kind,
+      functionName: d.functionName,
+      filePath: relative(cwd, d.filePath),
+      line: d.line,
+      message: d.message,
+      callee: d.callee,
+      missingCaps: d.missingCaps,
+      absorbedCaps: d.absorbedCaps,
     })),
+    functions: scores.allFunctions.length > 0 ? scores.allFunctions.map(f => ({
+      name: f.name,
+      filePath: relative(cwd, f.filePath),
+      line: f.line,
+      caps: f.caps,
+      isDeclared: f.isDeclared,
+      weightedStatements: f.weightedStatements,
+      score: f.score,
+    })) : undefined,
     scores: {
-      ...scores,
+      totalCap: scores.totalCap,
+      totalLoose: scores.totalLoose,
+      totalFunctions: scores.totalFunctions,
+      totalPure: scores.totalPure,
+      totalUndeclared: scores.totalUndeclared,
+      capScores: scores.capScores,
+      looseByType: scores.looseByType,
       topFunctions: scores.topFunctions.map(f => ({ ...f, filePath: relative(cwd, f.filePath) })),
       fileScores: scores.fileScores.map(f => ({ ...f, filePath: relative(cwd, f.filePath) })),
+      tips: scores.tips,
     },
   }, null, 2);
 }
