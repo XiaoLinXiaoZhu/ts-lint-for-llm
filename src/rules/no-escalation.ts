@@ -176,30 +176,35 @@ export const noEscalation = createRule({
       return null;
     }
 
-    /** 构建 JSDoc fix：在 @capability 注释中追加缺失的能力词 */
+    /** 构建 JSDoc fix：完整重写 @capability 行（合并已有+缺失，按约定排序） */
     function buildJSDocFix(
       fixer: { replaceTextRange(range: [number, number], text: string): any },
       comment: TSESTree.Comment,
+      callerCaps: Set<Capability>,
       missingCaps: Capability[],
     ) {
-      // comment.range 是注释的完整范围（包含 /* */ 或 //）
-      // comment.value 是注释内容（不含边界符号）
       const original = comment.value;
       const capMatch = original.match(/@capability(?:\s+(.*))?/);
       if (!capMatch) return null;
 
-      // 在 @capability 后插入能力词，保留块注释结尾的空格
-      const insertPos = capMatch.index! + capMatch[0].trimEnd().length;
-      const newValue = original.slice(0, insertPos) + " " + missingCaps.join(" ") + original.slice(insertPos);
-
-      // comment.range: [startIndex, endIndex] in source
       const range = comment.range;
       if (!range) return null;
 
-      // 重建完整注释文本
+      // 合并已有 + 缺失，按 ALL_CAPABILITIES 约定顺序排列
+      const merged = new Set(callerCaps);
+      for (const c of missingCaps) merged.add(c);
+      const sorted = ALL_CAPABILITIES.filter(c => merged.has(c));
+      const capText = sorted.length > 0 ? " " + sorted.join(" ") : "";
+
+      // 替换 @capability ... 为 @capability <sorted>，保留其余注释内容
+      const matchStart = capMatch.index!;
+      const matchEnd = matchStart + capMatch[0].trimEnd().length;
+      const before = original.slice(0, matchStart);
+      const after = original.slice(matchEnd);
+      const newValue = before + "@capability" + capText + after;
+
       const isBlock = comment.type === "Block";
       const newComment = isBlock ? `/*${newValue}*/` : `//${newValue}`;
-
       return fixer.replaceTextRange([range[0], range[1]], newComment);
     }
 
@@ -237,7 +242,7 @@ export const noEscalation = createRule({
             calleeCapabilities: [...callee.caps].join(", "),
           },
           fix: canFix && propagatable.length > 0
-            ? (fixer) => buildJSDocFix(fixer, (caller.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment, propagatable)
+            ? (fixer) => buildJSDocFix(fixer, (caller.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment, caller.caps, propagatable)
             : undefined,
         });
       }
