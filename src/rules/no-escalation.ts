@@ -92,6 +92,8 @@ export const noEscalation = createRule({
         "'{{name}}' 未声明能力，被视为全能力坏函数。请添加能力后缀或 @capability 标注。",
       asyncMismatch:
         "'{{name}}' 是 async 函数但未声明 Async 能力。",
+      fallibleMismatch:
+        "'{{name}}' 返回类型包含 null/undefined 但未声明 Fallible 能力。",
       fallibleAbsorbed:
         "'{{caller}}' 调用了 Fallible 函数 '{{callee}}'。如果失败已被处理（try-catch、默认值、parse-don't-validate），可忽略；否则请为 '{{caller}}' 补充 Fallible 声明。",
     },
@@ -185,6 +187,28 @@ export const noEscalation = createRule({
             : undefined,
         });
       }
+      // Fallible 自动检测：返回类型含 null/undefined 是语法事实，不可瞒报
+      if (returnsNullable(node) && resolved.declared && !resolved.caps.has("Fallible")) {
+        resolved.caps.add("Fallible");
+
+        const reportNode = node.type === AST_NODE_TYPES.FunctionDeclaration && node.id
+          ? node.id : node;
+
+        context.report({
+          node: reportNode,
+          messageId: "fallibleMismatch",
+          data: { name: name ?? "(anonymous)" },
+          fix: resolved.source.kind === "jsdoc"
+            ? (fixer) => buildJSDocFix(
+                fixer,
+                (resolved.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment,
+                resolved.caps,
+                [],
+              )
+            : undefined,
+        });
+      }
+
     }
 
     function exitFunction() {
@@ -247,6 +271,33 @@ export const noEscalation = createRule({
       return false;
     }
 
+    /** 检测返回类型是否包含 null 或 undefined（含 Promise 泛型参数内） */
+    function returnsNullable(
+      node: TSESTree.FunctionDeclaration | TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression,
+    ): boolean {
+      const retType = node.returnType?.typeAnnotation;
+      if (!retType) return false;
+      return typeContainsNullable(retType);
+    }
+
+    function typeContainsNullable(node: TSESTree.TypeNode): boolean {
+      if (
+        node.type === AST_NODE_TYPES.TSNullKeyword ||
+        node.type === AST_NODE_TYPES.TSUndefinedKeyword
+      ) return true;
+      if (node.type === AST_NODE_TYPES.TSUnionType) {
+        return node.types.some(t => typeContainsNullable(t));
+      }
+      // Promise<T | null> — 检查泛型参数
+      if (
+        node.type === AST_NODE_TYPES.TSTypeReference &&
+        node.typeArguments?.params
+      ) {
+        return node.typeArguments.params.some(t => typeContainsNullable(t));
+      }
+      return false;
+    }
+
     function checkCall(node: TSESTree.CallExpression, calleeName: string) {
       if (functionStack.length === 0) return;
       const caller = functionStack[functionStack.length - 1];
@@ -296,6 +347,7 @@ export const noEscalation = createRule({
           },
         });
       }
+
     }
 
     return {
