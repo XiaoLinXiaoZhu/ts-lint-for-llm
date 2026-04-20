@@ -11,7 +11,7 @@
 | # | 文档 | 状态 |
 |---|------|------|
 | 011 | [能力标注体系](011-capability-enforcement.md) | 活跃 — JSDoc `@capability` + ESLint no-escalation 规则 + 外部模块声明 |
-| 012 | [能力加权评分模型](012-capability-scoring-model.md) | 完成 — 逐行加权 × 能力数，验证了 bad→good→best 三级降分 |
+| 012 | [能力加权评分模型](012-capability-scoring-model.md) | 完成 — AST 语句加权 × 能力数，验证了 bad→good→best 三级降分 |
 | 017 | [统一评分模型](017-unified-scoring-model.md) | 完成 — 能力负担 + 类型松散度双维度，实验验证两个维度独立 |
 | 018 | [能力分类](018-capability-taxonomy.md) | 完成 — 精简到 5 个核心能力（IO/Fallible/Mutable/Async/Impure），对齐 Koka 效果系统 |
 
