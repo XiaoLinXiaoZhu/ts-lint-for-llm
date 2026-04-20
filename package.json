@@ -1,0 +1,30 @@
+{
+  "name": "eslint-plugin-capability",
+  "version": "0.1.0",
+  "description": "ESLint plugin for capability-based effect tracking and scoring",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "capability-report": "dist/scoring/report.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "report": "bun src/scoring/report.ts"
+  },
+  "peerDependencies": {
+    "eslint": ">=9.0.0",
+    "@typescript-eslint/parser": ">=8.0.0"
+  },
+  "dependencies": {
+    "@typescript-eslint/utils": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/"
+  ]
+}
