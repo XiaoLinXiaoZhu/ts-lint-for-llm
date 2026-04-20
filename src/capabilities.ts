@@ -29,5 +29,5 @@ export const ELIMINABILITY: Record<Capability, "wrappable" | "rewritable" | "iso
   Mutable: "rewritable",
   Impure: "rewritable",
   IO: "isolate-only",
-  Async: "isolate-only",
+  Async: "wrappable",
 };
