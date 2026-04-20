@@ -173,6 +173,11 @@ function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
     if (/^(readonly\s|Readonly<|ReadonlyArray<|ReadonlyMap<|ReadonlySet<)/.test(text)) {
       return false;
     }
+    // 消费型接口（只读迭代器/流）不算可变参数
+    if (/^(Async)?(Iterable|Iterator|IterableIterator|Generator)</.test(text) ||
+        /^ReadableStream/.test(text)) {
+      return false;
+    }
   }
 
   return isRefType(type);
