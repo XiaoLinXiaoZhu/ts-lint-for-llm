@@ -8,6 +8,8 @@
  */
 
 import { Project, SyntaxKind, Node, type SourceFile, type FunctionDeclaration, type ArrowFunction, type FunctionExpression, type VariableDeclaration, type CallExpression } from "ts-morph";
+import { resolve } from "node:path";
+import { loadCapFiles, type ExternalCapEntry } from "./cap-file.js";
 import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, type Capability } from "./capabilities.js";
 
 // ── 类型 ──
@@ -38,6 +40,7 @@ export interface ProjectScan {
   functions: Map<string, FunctionInfo>;
   /** 按函数名索引（可能一对多） */
   byName: Map<string, FunctionInfo[]>;
+  externalCaps: Map<string, ExternalCapEntry>;
 }
 
 // ── 能力解析 ──
@@ -146,7 +149,7 @@ const BRANCH_KINDS = new Set([
   SyntaxKind.IfStatement, SyntaxKind.ForStatement, SyntaxKind.ForInStatement,
   SyntaxKind.ForOfStatement, SyntaxKind.WhileStatement, SyntaxKind.DoStatement,
   SyntaxKind.CaseClause, SyntaxKind.CatchClause,
-  SyntaxKind.ConditionalExpression, SyntaxKind.BinaryExpression,
+  SyntaxKind.ConditionalExpression,
 ]);
 
 function computeWeightedStatements(body: Node): { count: number; weighted: number } {
@@ -244,6 +247,15 @@ export function scanProject(tsConfigPath: string): ProjectScan {
   const project = new Project({ tsConfigFilePath: tsConfigPath });
   const functions = new Map<string, FunctionInfo>();
   const byName = new Map<string, FunctionInfo[]>();
+  const capEntries = loadCapFiles(resolve(tsConfigPath, ".."));
+  const externalCaps = new Map<string, ExternalCapEntry>();
+  for (const entry of capEntries) {
+    externalCaps.set(entry.name, entry);
+  }
+  if (capEntries.length > 0) {
+    // 不打印到 stdout（stdout 用于 JSON），用 stderr
+    console.error(`[capability-lint] Loaded ${capEntries.length} external declarations from .cap.ts files`);
+  }
 
   function register(info: FunctionInfo) {
     functions.set(info.id, info);
@@ -264,7 +276,7 @@ export function scanProject(tsConfigPath: string): ProjectScan {
     resolveFileCalls(sf, functions, byName);
   }
 
-  return { functions, byName };
+  return { functions, byName, externalCaps };
 }
 
 function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => void) {

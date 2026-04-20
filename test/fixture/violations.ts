@@ -37,3 +37,12 @@ export async function safeFetch(id: string): Promise<string> {
 export function pureWithExcess(x: number): number {
   return add(x, 1);
 }
+
+
+declare function externalApiCall(): any;
+
+// Cap file 测试：调用了 .cap.ts 中声明的外部函数
+/** @capability */
+export function callsExternalApi(): void {
+  externalApiCall();
+}

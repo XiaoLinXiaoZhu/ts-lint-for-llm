@@ -188,6 +188,30 @@ console.log("\n── 11. --fix 自动修复 ──");
   writeFileSync(violationsPath, original);
 }
 
+console.log("\n── 12. .cap.ts 外部能力声明 ──");
+{
+  // cap file 应该被加载
+  assert(scan.externalCaps.size > 0, "加载了 .cap.ts 声明", `size=${scan.externalCaps.size}`);
+
+  // externalApiCall 应该在 externalCaps 中
+  const ext = scan.externalCaps.get("externalApiCall");
+  assert(ext !== undefined, "externalApiCall 在 externalCaps 中");
+  if (ext) {
+    assert(ext.caps.includes("IO"), "externalApiCall 有 IO");
+    assert(ext.caps.includes("Async"), "externalApiCall 有 Async");
+    assert(ext.caps.includes("Fallible"), "externalApiCall 有 Fallible");
+  }
+
+  // callsExternalApi 调用了 externalApiCall，应该报 escalation（缺 IO）
+  const diags = findDiags("callsExternalApi", DiagnosticKind.Escalation);
+  assert(diags.length > 0, "callsExternalApi 报了 escalation（缺 IO）", `got ${diags.length}`);
+
+  // externalApiCall 不应该出现在 unregistered 中
+  const unreg = findDiags("callsExternalApi", DiagnosticKind.Unregistered);
+  const unregForApi = unreg.filter(d => d.callee === "externalApiCall");
+  assert(unregForApi.length === 0, "externalApiCall 不报 unregistered");
+}
+
 // ══ 汇总 ══
 
 console.log(`\n${"═".repeat(40)}`);

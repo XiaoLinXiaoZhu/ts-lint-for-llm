@@ -104,7 +104,11 @@ export function analyze(scan: ProjectScan): AnalysisResult {
     // 未解析的调用：查内置表
     const reportedUnresolved = new Set<string>();
     for (const calleeName of fn.unresolvedCalls) {
-      if (calleeName in BUILTIN_CAPABILITIES) {
+      const extEntry = scan.externalCaps.get(calleeName);
+      if (extEntry) {
+        const calleeCaps = new Set<Capability>(extEntry.caps);
+        checkCall(diagnostics, fn, callerCaps, calleeName, calleeCaps);
+      } else if (calleeName in BUILTIN_CAPABILITIES) {
         const calleeCaps = new Set<Capability>(BUILTIN_CAPABILITIES[calleeName] as Capability[]);
         checkCall(diagnostics, fn, callerCaps, calleeName, calleeCaps);
       } else if (!reportedUnresolved.has(calleeName)) {
