@@ -188,7 +188,7 @@ function isRefType(type: import("ts-morph").Type): boolean {
   if (type.isUnion()) {
     return type.getUnionTypes().some(t => isRefType(t));
   }
-  return type.isObject() || type.isArray() || type.isInterface();
+  return type.isObject() || type.isArray() || type.isInterface() || type.isIntersection();
 }
 
 // ── 语句权重计算 ──
