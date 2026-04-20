@@ -10,7 +10,7 @@
  */
 
 import { ESLintUtils, TSESTree, AST_NODE_TYPES } from "@typescript-eslint/utils";
-import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, type Capability } from "../capabilities.js";
+import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, ELIMINABILITY, type Capability } from "../capabilities.js";
 
 function extractFromSuffix(name: string | null): Set<Capability> | null {
   if (!name) return null;
@@ -74,6 +74,8 @@ export const noEscalation = createRule({
         "'{{caller}}' 缺少能力 [{{missing}}]，但调用了需要 [{{calleeCapabilities}}] 的 '{{callee}}'。",
       undeclared:
         "'{{name}}' 未声明能力，被视为全能力坏函数。请添加能力后缀或 @capability 标注。",
+      fallibleAbsorbed:
+        "'{{caller}}' 调用了 Fallible 函数 '{{callee}}'。如果失败已被处理（try-catch、默认值、parse-don't-validate），可忽略；否则请为 '{{caller}}' 补充 Fallible 声明。",
     },
     schema: [
       {
@@ -130,6 +132,13 @@ export const noEscalation = createRule({
       ) {
         comments = [...(comments ?? []), ...(getLeadingComments(node.parent.parent) ?? [])];
       }
+      if (
+        node.type === AST_NODE_TYPES.FunctionDeclaration &&
+        (node.parent.type === AST_NODE_TYPES.ExportNamedDeclaration ||
+          node.parent.type === AST_NODE_TYPES.ExportDefaultDeclaration)
+      ) {
+        comments = [...(comments ?? []), ...(getLeadingComments(node.parent) ?? [])];
+      }
 
       const resolved = resolveCapabilities(name, comments);
       if (name) functionCapabilities.set(name, resolved);
@@ -155,15 +164,21 @@ export const noEscalation = createRule({
       const caller = functionStack[functionStack.length - 1];
       const callee = lookupCalleeCaps(calleeName);
       if (!callee) return;
+      if (!callee.declared) return;
 
       const missing: Capability[] = [];
+      const absorbed: Capability[] = [];
       for (const cap of callee.caps) {
         if (!caller.caps.has(cap)) {
-          missing.push(cap);
+          if (ELIMINABILITY[cap] === "wrappable") {
+            absorbed.push(cap);
+          } else {
+            missing.push(cap);
+          }
         }
       }
 
-      if (missing.length > 0 && callee.declared) {
+      if (missing.length > 0) {
         context.report({
           node,
           messageId: "escalation",
@@ -172,6 +187,17 @@ export const noEscalation = createRule({
             callee: calleeName,
             missing: missing.join(", "),
             calleeCapabilities: [...callee.caps].join(", "),
+          },
+        });
+      }
+
+      if (absorbed.length > 0 && missing.length === 0) {
+        context.report({
+          node,
+          messageId: "fallibleAbsorbed",
+          data: {
+            caller: caller.name ?? "(anonymous)",
+            callee: calleeName,
           },
         });
       }
@@ -240,6 +266,7 @@ export const noEscalation = createRule({
         }
         if (calleeName) checkCall(node, calleeName);
       },
+
     };
   },
 });
