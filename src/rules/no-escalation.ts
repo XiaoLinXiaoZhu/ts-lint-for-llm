@@ -7,10 +7,25 @@
  * 能力声明方式（优先级从高到低）：
  * 1. 函数名后缀: fetchUser_IO_Async_Fallible
  * 2. JSDoc @capability: /** @capability IO Fallible *\/
+ *
+ * --fix 行为：
+ * 对 JSDoc 声明的 caller，自动补全无法消除的能力（Fallible 除外）。
+ * 后缀声明和未声明函数不做自动修复。
  */
 
 import { ESLintUtils, TSESTree, AST_NODE_TYPES } from "@typescript-eslint/utils";
 import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, ELIMINABILITY, type Capability } from "../capabilities.js";
+
+type DeclarationSource =
+  | { kind: "suffix" }
+  | { kind: "jsdoc"; comment: TSESTree.Comment }
+  | { kind: "undeclared" };
+
+interface ResolvedCaps {
+  caps: Set<Capability>;
+  declared: boolean;
+  source: DeclarationSource;
+}
 
 function extractFromSuffix(name: string | null): Set<Capability> | null {
   if (!name) return null;
@@ -26,7 +41,7 @@ function extractFromSuffix(name: string | null): Set<Capability> | null {
   return found ? caps : null;
 }
 
-function extractFromJSDoc(comments: TSESTree.Comment[] | undefined): Set<Capability> | null {
+function extractFromJSDoc(comments: TSESTree.Comment[] | undefined): { caps: Set<Capability>; comment: TSESTree.Comment } | null {
   if (!comments) return null;
   for (const comment of comments) {
     const match = comment.value.match(/@capability(?:\s+(.+))?/);
@@ -39,7 +54,7 @@ function extractFromJSDoc(comments: TSESTree.Comment[] | undefined): Set<Capabil
           }
         }
       }
-      return caps;
+      return { caps, comment };
     }
   }
   return null;
@@ -48,12 +63,12 @@ function extractFromJSDoc(comments: TSESTree.Comment[] | undefined): Set<Capabil
 function resolveCapabilities(
   name: string | null,
   comments: TSESTree.Comment[] | undefined,
-): { caps: Set<Capability>; declared: boolean } {
+): ResolvedCaps {
   const fromSuffix = extractFromSuffix(name);
-  if (fromSuffix !== null) return { caps: fromSuffix, declared: true };
+  if (fromSuffix !== null) return { caps: fromSuffix, declared: true, source: { kind: "suffix" } };
   const fromJSDoc = extractFromJSDoc(comments);
-  if (fromJSDoc !== null) return { caps: fromJSDoc, declared: true };
-  return { caps: new Set(ALL_CAPABILITIES), declared: false };
+  if (fromJSDoc !== null) return { caps: fromJSDoc.caps, declared: true, source: { kind: "jsdoc", comment: fromJSDoc.comment } };
+  return { caps: new Set(ALL_CAPABILITIES), declared: false, source: { kind: "undeclared" } };
 }
 
 const createRule = ESLintUtils.RuleCreator(
@@ -66,6 +81,7 @@ export const noEscalation = createRule({
   name: "no-escalation",
   meta: {
     type: "problem",
+    fixable: "code",
     docs: {
       description: "Disallow calling functions with capabilities not declared by the caller",
     },
@@ -74,6 +90,8 @@ export const noEscalation = createRule({
         "'{{caller}}' 缺少能力 [{{missing}}]，但调用了需要 [{{calleeCapabilities}}] 的 '{{callee}}'。",
       undeclared:
         "'{{name}}' 未声明能力，被视为全能力坏函数。请添加能力后缀或 @capability 标注。",
+      asyncMismatch:
+        "'{{name}}' 是 async 函数但未声明 Async 能力。",
       fallibleAbsorbed:
         "'{{caller}}' 调用了 Fallible 函数 '{{callee}}'。如果失败已被处理（try-catch、默认值、parse-don't-validate），可忽略；否则请为 '{{caller}}' 补充 Fallible 声明。",
     },
@@ -99,7 +117,7 @@ export const noEscalation = createRule({
   },
   defaultOptions: [{ externalCapabilities: {} as ExternalCapabilityMap }],
   create(context, [options]) {
-    const functionCapabilities = new Map<string, { caps: Set<Capability>; declared: boolean }>();
+    const functionCapabilities = new Map<string, ResolvedCaps>();
     const externalCaps: ExternalCapabilityMap = options.externalCapabilities ?? {};
 
     const externalFunctionCaps = new Map<string, Set<Capability>>();
@@ -113,6 +131,7 @@ export const noEscalation = createRule({
       name: string | null;
       caps: Set<Capability>;
       declared: boolean;
+      source: DeclarationSource;
       node: TSESTree.Node;
     }> = [];
 
@@ -143,6 +162,29 @@ export const noEscalation = createRule({
       const resolved = resolveCapabilities(name, comments);
       if (name) functionCapabilities.set(name, resolved);
       functionStack.push({ name, ...resolved, node });
+
+      // Async 自动检测：async 关键字和 Promise 返回类型是语法事实，不可瞒报
+      if (isAsyncFunction(node) && resolved.declared && !resolved.caps.has("Async")) {
+        // 注入真实 Async 能力，使传播链能看到
+        resolved.caps.add("Async");
+
+        const reportNode = node.type === AST_NODE_TYPES.FunctionDeclaration && node.id
+          ? node.id : node;
+
+        context.report({
+          node: reportNode,
+          messageId: "asyncMismatch",
+          data: { name: name ?? "(anonymous)" },
+          fix: resolved.source.kind === "jsdoc"
+            ? (fixer) => buildJSDocFix(
+                fixer,
+                (resolved.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment,
+                resolved.caps,
+                [],
+              )
+            : undefined,
+        });
+      }
     }
 
     function exitFunction() {
@@ -157,6 +199,52 @@ export const noEscalation = createRule({
       const fromSuffix = extractFromSuffix(calleeName);
       if (fromSuffix) return { caps: fromSuffix, declared: true };
       return null;
+    }
+
+    /** 构建 JSDoc fix：完整重写 @capability 行（合并已有+缺失，按约定排序） */
+    function buildJSDocFix(
+      fixer: { replaceTextRange(range: [number, number], text: string): any },
+      comment: TSESTree.Comment,
+      callerCaps: Set<Capability>,
+      missingCaps: Capability[],
+    ) {
+      const original = comment.value;
+      const capMatch = original.match(/@capability(?:\s+(.*))?/);
+      if (!capMatch) return null;
+
+      const range = comment.range;
+      if (!range) return null;
+
+      // 合并已有 + 缺失，按 ALL_CAPABILITIES 约定顺序排列
+      const merged = new Set(callerCaps);
+      for (const c of missingCaps) merged.add(c);
+      const sorted = ALL_CAPABILITIES.filter(c => merged.has(c));
+      const capText = sorted.length > 0 ? " " + sorted.join(" ") : "";
+
+      // 替换 @capability ... 为 @capability <sorted>，保留其余注释内容
+      const matchStart = capMatch.index!;
+      const matchEnd = matchStart + capMatch[0].trimEnd().length;
+      const before = original.slice(0, matchStart);
+      const after = original.slice(matchEnd);
+      const newValue = before + "@capability" + capText + after;
+
+      const isBlock = comment.type === "Block";
+      const newComment = isBlock ? `/*${newValue}*/` : `//${newValue}`;
+      return fixer.replaceTextRange([range[0], range[1]], newComment);
+    }
+
+    /** 检测函数是否语法上为 async（async 关键字或 Promise 返回类型） */
+    function isAsyncFunction(
+      node: TSESTree.FunctionDeclaration | TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression,
+    ): boolean {
+      if (node.async) return true;
+      const retType = node.returnType?.typeAnnotation;
+      if (
+        retType?.type === AST_NODE_TYPES.TSTypeReference &&
+        retType.typeName.type === AST_NODE_TYPES.Identifier &&
+        retType.typeName.name === "Promise"
+      ) return true;
+      return false;
     }
 
     function checkCall(node: TSESTree.CallExpression, calleeName: string) {
@@ -179,6 +267,10 @@ export const noEscalation = createRule({
       }
 
       if (missing.length > 0) {
+        const canFix = caller.declared && caller.source.kind === "jsdoc";
+        // 只自动传播非 wrappable 能力
+        const propagatable = missing.filter(c => ELIMINABILITY[c] !== "wrappable");
+
         context.report({
           node,
           messageId: "escalation",
@@ -188,6 +280,9 @@ export const noEscalation = createRule({
             missing: missing.join(", "),
             calleeCapabilities: [...callee.caps].join(", "),
           },
+          fix: canFix && propagatable.length > 0
+            ? (fixer) => buildJSDocFix(fixer, (caller.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment, caller.caps, propagatable)
+            : undefined,
         });
       }
 
@@ -226,10 +321,20 @@ export const noEscalation = createRule({
           const varDecl = node.parent;
           const comments = getLeadingComments(varDecl);
           const nameCaps = extractFromSuffix(node.id.name);
-          const jsdocCaps = extractFromJSDoc(comments);
-          const declared = nameCaps !== null || jsdocCaps !== null;
-          const caps = nameCaps ?? jsdocCaps ?? new Set(ALL_CAPABILITIES);
-          functionCapabilities.set(node.id.name, { caps, declared });
+          const jsdocResult = extractFromJSDoc(comments);
+          const declared = nameCaps !== null || jsdocResult !== null;
+          const caps = nameCaps ?? jsdocResult?.caps ?? new Set(ALL_CAPABILITIES);
+
+          let source: DeclarationSource;
+          if (nameCaps !== null) {
+            source = { kind: "suffix" };
+          } else if (jsdocResult !== null) {
+            source = { kind: "jsdoc", comment: jsdocResult.comment };
+          } else {
+            source = { kind: "undeclared" };
+          }
+
+          functionCapabilities.set(node.id.name, { caps, declared, source });
           if (!declared) {
             context.report({ node: node.id, messageId: "undeclared", data: { name: node.id.name } });
           }
