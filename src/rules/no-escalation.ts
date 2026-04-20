@@ -90,6 +90,8 @@ export const noEscalation = createRule({
         "'{{caller}}' 缺少能力 [{{missing}}]，但调用了需要 [{{calleeCapabilities}}] 的 '{{callee}}'。",
       undeclared:
         "'{{name}}' 未声明能力，被视为全能力坏函数。请添加能力后缀或 @capability 标注。",
+      asyncMismatch:
+        "'{{name}}' 是 async 函数但未声明 Async 能力。",
       fallibleAbsorbed:
         "'{{caller}}' 调用了 Fallible 函数 '{{callee}}'。如果失败已被处理（try-catch、默认值、parse-don't-validate），可忽略；否则请为 '{{caller}}' 补充 Fallible 声明。",
     },
@@ -160,6 +162,29 @@ export const noEscalation = createRule({
       const resolved = resolveCapabilities(name, comments);
       if (name) functionCapabilities.set(name, resolved);
       functionStack.push({ name, ...resolved, node });
+
+      // Async 自动检测：async 关键字和 Promise 返回类型是语法事实，不可瞒报
+      if (isAsyncFunction(node) && resolved.declared && !resolved.caps.has("Async")) {
+        // 注入真实 Async 能力，使传播链能看到
+        resolved.caps.add("Async");
+
+        const reportNode = node.type === AST_NODE_TYPES.FunctionDeclaration && node.id
+          ? node.id : node;
+
+        context.report({
+          node: reportNode,
+          messageId: "asyncMismatch",
+          data: { name: name ?? "(anonymous)" },
+          fix: resolved.source.kind === "jsdoc"
+            ? (fixer) => buildJSDocFix(
+                fixer,
+                (resolved.source as { kind: "jsdoc"; comment: TSESTree.Comment }).comment,
+                resolved.caps,
+                [],
+              )
+            : undefined,
+        });
+      }
     }
 
     function exitFunction() {
@@ -206,6 +231,20 @@ export const noEscalation = createRule({
       const isBlock = comment.type === "Block";
       const newComment = isBlock ? `/*${newValue}*/` : `//${newValue}`;
       return fixer.replaceTextRange([range[0], range[1]], newComment);
+    }
+
+    /** 检测函数是否语法上为 async（async 关键字或 Promise 返回类型） */
+    function isAsyncFunction(
+      node: TSESTree.FunctionDeclaration | TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression,
+    ): boolean {
+      if (node.async) return true;
+      const retType = node.returnType?.typeAnnotation;
+      if (
+        retType?.type === AST_NODE_TYPES.TSTypeReference &&
+        retType.typeName.type === AST_NODE_TYPES.Identifier &&
+        retType.typeName.name === "Promise"
+      ) return true;
+      return false;
     }
 
     function checkCall(node: TSESTree.CallExpression, calleeName: string) {
