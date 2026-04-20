@@ -109,7 +109,6 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
 
   // ── Node.js path ──
   dirname: [], basename: [], extname: [], resolve: [], relative: [],
-  join: [],
 
   // ── Node.js process ──
   exit: ["IO"], cwd: ["Impure"], argv: ["Impure"],

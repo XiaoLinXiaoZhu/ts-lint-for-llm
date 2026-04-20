@@ -99,7 +99,8 @@ if (flags.has("--help")) {
 
 if (flags.has("--version")) {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"));
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
     console.log(pkg.version);
   } catch {
     console.log("unknown");
