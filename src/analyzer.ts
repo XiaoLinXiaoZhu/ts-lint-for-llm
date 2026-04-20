@@ -88,11 +88,12 @@ export function analyze(scan: ProjectScan): AnalysisResult {
       });
     }
     if (fn.isDeclared && !caps.has("Mutable") && fn.mutableParams.length > 0) {
+      caps.add("Mutable");
       diagnostics.push({
         kind: DiagnosticKind.MutableParam,
         functionId: id, functionName: fn.name,
         filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 的参数 [${fn.mutableParams.join(", ")}] 是非 readonly 引用类型，可能修改调用方状态。若不修改参数，请将其标为 readonly；若确实修改，请声明 Mutable。`,
+        message: `'${fn.name}' 的参数 [${fn.mutableParams.join(", ")}] 是非 readonly 引用类型，已自动标记为 Mutable。将参数改为 readonly 可移除此标记并降低分数。`,
       });
     }
     effectiveCaps.set(id, caps);

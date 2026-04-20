@@ -10,10 +10,10 @@ export function looseAsAny(x: unknown): string {
   return x as any;
 }
 
-/** @capability */
+/** @capability Mutable */
 export function looseRecord(data: Record<string, any>): void {}
 
-/** @capability */
+/** @capability Mutable */
 export function looseObject(obj: Object): void {}
 
 /** @capability */

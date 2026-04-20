@@ -176,6 +176,8 @@ console.log("\n── 11. --fix 自动修复 ──");
   // 备份 violations.ts，修复后检查，再还原
   const violationsPath = resolve(import.meta.dir, "fixture/violations.ts");
   const original = readFileSync(violationsPath, "utf8");
+  const mutablePath = resolve(import.meta.dir, "fixture/mutable.ts");
+  const mutableOriginal = readFileSync(mutablePath, "utf8");
 
   const fixResult = applyFixes(scan, result);
   const fixed = readFileSync(violationsPath, "utf8");
@@ -186,6 +188,7 @@ console.log("\n── 11. --fix 自动修复 ──");
 
   // 还原
   writeFileSync(violationsPath, original);
+  writeFileSync(mutablePath, mutableOriginal);
 }
 
 console.log("\n── 12. .cap.ts 外部能力声明 ──");
@@ -250,12 +253,12 @@ console.log("\n── 14. Mutable: wrappable 行为 ──");
   const mutableEsc = buildDiags.filter(d => d.missingCaps?.includes("Mutable"));
   assert(mutableEsc.length === 0, "buildList 的局部 push 不报 Mutable escalation");
 
-  // 调用 Mutable 函数 → 报 absorbed（wrappable）而非 escalation
+  // addDefault 有非 readonly 引用参数 → 自动注入 Mutable → 调用 pushItem 不报 escalation
   const addDefault = findFn("addDefault")!;
+  const addDefaultMutableParam = findDiags("addDefault", DiagnosticKind.MutableParam);
+  assert(addDefaultMutableParam.length > 0, "addDefault 自动注入 Mutable（非 readonly 参数）");
   const escDiags = findDiags("addDefault", DiagnosticKind.Escalation).filter(d => d.missingCaps?.includes("Mutable"));
-  const absDiags = findDiags("addDefault", DiagnosticKind.Absorbed).filter(d => d.absorbedCaps?.includes("Mutable"));
-  assert(escDiags.length === 0, "addDefault 调用 Mutable 函数不报 escalation");
-  assert(absDiags.length > 0, "addDefault 调用 Mutable 函数报 absorbed", `got ${absDiags.length}`);
+  assert(escDiags.length === 0, "addDefault 调用 Mutable 函数不报 escalation（已自动注入）");
 }
 
 // ══ 汇总 ══

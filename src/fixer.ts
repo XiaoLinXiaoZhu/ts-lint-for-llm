@@ -68,6 +68,7 @@ export function applyFixes(
     // 自身特征
     if (fn.returnsAsync) enc.add("Async");
     if (fn.returnsNullable) enc.add("Fallible");
+    if (fn.mutableParams.length > 0) enc.add("Mutable");
 
     // 已解析调用的 callee caps
     for (const call of fn.resolvedCalls) {

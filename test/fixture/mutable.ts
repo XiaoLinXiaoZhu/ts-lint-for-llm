@@ -49,7 +49,7 @@ export function buildList(n: number): number[] {
   return result;
 }
 
-// 调用声明了 Mutable 的函数但自身未声明 → 应报 absorbed（wrappable）而非 escalation
+// 调用声明了 Mutable 的函数，自身未声明 Mutable 但有非 readonly 参数 → 自动注入 Mutable
 /** @capability */
 export function addDefault(state: State): void {
   pushItem(state, "default");
