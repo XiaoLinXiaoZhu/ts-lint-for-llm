@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * 统一评分报告 CLI
  *
@@ -11,18 +12,23 @@ import { join, relative, resolve } from "node:path";
 import { scoreCapability, type CapabilityResult, type FunctionScore } from "./capability-scorer.js";
 import { scoreLooseness, type LoosenessResult } from "./looseness-scorer.js";
 
-// @typescript-eslint/parser — resolve from cwd's node_modules or our own
+// @typescript-eslint/parser — resolve from cwd's node_modules or normal Node resolution
 let parser: any;
-try {
-  parser = require(resolve("node_modules", "@typescript-eslint", "parser", "dist", "index.js"));
-} catch {
-  try {
-    parser = require(resolve(__dirname, "..", "..", "node_modules", "@typescript-eslint", "parser", "dist", "index.js"));
-  } catch {
-    console.error("Error: @typescript-eslint/parser not found. Install it: npm install -D @typescript-eslint/parser");
-    process.exit(1);
+function loadParser() {
+  // Try loading from the consuming project's node_modules (cwd)
+  const tryPaths = [
+    resolve(process.cwd(), "node_modules", "@typescript-eslint", "parser"),
+    resolve(process.cwd(), "node_modules", "@typescript-eslint", "parser", "dist", "index.js"),
+  ];
+  for (const p of tryPaths) {
+    try { return require(p); } catch {}
   }
+  // Fallback: let Node resolve it normally
+  try { return require("@typescript-eslint/parser"); } catch {}
+  console.error("Error: @typescript-eslint/parser not found. Install it: npm install -D @typescript-eslint/parser");
+  process.exit(1);
 }
+parser = loadParser();
 
 interface FileResult {
   file: string;

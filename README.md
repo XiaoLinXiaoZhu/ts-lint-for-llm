@@ -6,46 +6,23 @@
 
 ### 1. 安装
 
-在你的项目中：
-
 ```bash
-# 安装本插件（从本地路径）
-bun add -d eslint-plugin-capability@link:../ts-lint-for-llm
+# 先在 lint 仓库注册 link（一次性）
+cd path/to/ts-lint-for-llm && bun link
 
-# 如果还没安装 eslint 和 parser
-bun add -d eslint @typescript-eslint/parser
+# 在你的项目中 link 安装
+cd your-project && bun link eslint-plugin-capability
+
+# 确保有 parser（如果还没装）
+bun add -d @typescript-eslint/parser
 ```
 
 ### 2. 跑评分报告
 
-不需要任何配置，直接扫描：
-
 ```bash
-bun <lint-repo>/src/scoring/report.ts src/
-```
-
-输出示例：
-
-```
-╔══════════════════════════════════════════════════╗
-║          Capability Health Report                ║
-╠══════════════════════════════════════════════════╣
-║  Files scanned:       29
-║  Functions:           72
-║  Pure functions:       0
-║  Undeclared:          72
-║
-║  ── Capability Burden ──        (越低越好)
-║    IO             1937.5  ████████████████████
-║    Fallible       1937.5  ████████████████████
-║    ...
-║    TOTAL          9687.5
-║
-║  ── Type Looseness ──           (越低越好)
-║    any                  ×  2  =    20
-║    optional-field       × 15  =    15
-║    TOTAL                          51
-╚══════════════════════════════════════════════════╝
+bunx capability-report src/
+# 或指定多个目录
+bunx capability-report apps/ packages/
 ```
 
 ### 3. 启用 ESLint 规则
@@ -67,7 +44,6 @@ export default [
       capability: capabilityPlugin,
     },
     rules: {
-      // 检查能力权限传播：调用方必须声明被调方的所有能力
       "capability/no-escalation": "warn",
     },
   },
