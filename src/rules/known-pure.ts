@@ -206,4 +206,41 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
 
   // ── Misc ──
   next: ["Async"],
+
+  // ── Node.js / Bun API ──
+  unlink: ["IO", "Async", "Fallible"],
+  stat: ["IO", "Async", "Fallible"],
+  readdir: ["IO", "Async", "Fallible"],
+  rename: ["IO", "Async", "Fallible"],
+  copyFile: ["IO", "Async", "Fallible"],
+  access: ["IO", "Async", "Fallible"],
+  realpath: ["IO", "Async", "Fallible"],
+  dirname: [],
+  basename: [],
+  extname: [],
+  resolve: [],
+  relative: [],
+  join: [],
+  exit: ["IO"],
+  cwd: ["Impure"],
+  argv: ["Impure"],
+  // Bun
+  file: ["IO"],
+  write: ["IO", "Async", "Fallible"],
+  serve: ["IO"],
+  exists: ["IO", "Async"],
+
+  // ── EventEmitter ──
+  on: [],
+  off: [],
+  once: [],
+  emit: ["IO"],
+
+  // ── Hono / HTTP ──
+  param: [],
+  header: [],
+  body: [],
+  status: [],
+  use: [],
+  cors: [],
 };
