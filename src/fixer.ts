@@ -47,7 +47,7 @@ export function applyFixes(
     // source-of-truth: effective caps（含 mismatch 注入的）
     const eff = new Set(result.effectiveCaps.get(id) ?? fn.declaredCaps);
     needed.set(id, new Set(eff));
-    encountered.set(id, new Set(eff));
+    encountered.set(id, new Set<Capability>());
   }
 
   // 从 escalation diagnostics 收集缺失的能力
