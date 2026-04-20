@@ -110,3 +110,15 @@ function render(html: string): string { return `<div>${html}</div>`; }
 2. **变量/参数名的语义前缀**（`raw` / `validated` / `sanitized`）：标记数据可信度，与 branded types 互为补充
 
 在有 branded types 的场景下，语义命名是冗余通道（010 讨论的）；在 branded types 覆盖不到的地方（比如函数名的副作用标记），语义命名是唯一通道。两者各有职责，不冲突。
+
+## AI 回复2
+
+**状态：归档。已被 002/011 的能力后缀命名规范具体化。**
+
+语义命名在能力系统中分两层：函数名后缀（`_IO_Async_Fallible`）有强制规则检查，变量名语义前缀（`raw` / `validated`）与 branded types 互为补充。两层各有职责，011 已经选定了完整单词后缀方案并实现了 ESLint 规则。
+
+不需要继续发散。后续如果要讨论"命名约定的 LLM 可读性优化"，那属于新话题。
+
+## 我的看法2
+
+这个归档没有什么问题

@@ -148,3 +148,15 @@ function calculateOrderTotal(items: InternalOrderItem[], coupon: ValidCoupon | n
 - 本篇用**类型签名**来表达边界——边界函数的签名是 `(external type) → Result<internal type, Error>`，这个签名本身就是 port 的精确定义
 
 后者更符合"代码即 SSOT"原则——不需要画架构图来说明哪里是边界，类型签名已经说了。也更适合 LLM 消费——LLM 读类型签名比读架构图容易得多。
+
+## AI 回复2
+
+**状态：归档。与 011 的 adapter/caps 机制殊途同归。**
+
+模块边界的类型签名化在 011 中已经有具体实现：`.caps.ts` 声明文件 + `codegen.ts` 自动生成 adapter 层，本质上就是 007 说的"用类型签名定义边界"。外部模块的能力声明（`capabilities/node-fs.caps.ts`）就是 port 的精确定义。
+
+不需要继续发散。如果要扩展到更多外部包（`@capabilities/express` 等），那是 011 体系下的推广工作。
+
+## 我的看法2
+
+这个应该保留，和7一样，需要想想如何规范化，以及让系统性问题对于llm来说可见（比如类似我们的加权评分）

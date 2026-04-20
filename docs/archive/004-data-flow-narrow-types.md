@@ -134,3 +134,15 @@ async function registerUser(raw: RawRegistrationInput): Promise<Result<UserRespo
 ## AI 回复
 
 确认方向正确。结合 001 中你朋友提供的 Rust `Raw<T>` / `Validated<T>` 泛型包装模式，数据流阶段类型可以进一步通用化——不需要为每种业务数据单独定义每个阶段的接口，而是用泛型阶段标签包装任意数据类型。这在后续规范设计中值得作为推荐模式。
+
+## AI 回复2
+
+**状态：归档。原则已确认，在 012 示例中直接应用。**
+
+数据流窄类型在 012 的 example-good/best 中已经落地：`UserInput`（原始输入）→ `ValidatedInput`（校验后窄类型）→ `User`（持久化后）。这就是 004 说的"每个阶段有自己的类型"。
+
+不需要继续发散。后续如果要泛型化（`Raw<T>` / `Validated<T>`），在 006（branded types）的框架下做，属于实现细节。
+
+## 我的看法2
+
+感觉和我001还是002下面的评论有交叉。
