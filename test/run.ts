@@ -212,6 +212,52 @@ console.log("\n── 12. .cap.ts 外部能力声明 ──");
   assert(unregForApi.length === 0, "externalApiCall 不报 unregistered");
 }
 
+console.log("\n── 13. Mutable: 参数可变性检测 ──");
+{
+  // 非 readonly 引用参数 → mutableParams 非空
+  const readState = findFn("readState")!;
+  assert(readState.mutableParams.length > 0, "readState 有非 readonly 引用参数", `got [${readState.mutableParams}]`);
+  assert(readState.mutableParams.includes("state"), "readState 的 state 参数被检出");
+
+  // readonly 引用参数 → mutableParams 为空
+  const readStateRo = findFn("readStateReadonly")!;
+  assert(readStateRo.mutableParams.length === 0, "readStateReadonly 无非 readonly 引用参数");
+
+  // readonly 数组参数 → mutableParams 为空
+  const sumItems = findFn("sumItems")!;
+  assert(sumItems.mutableParams.length === 0, "sumItems 的 readonly number[] 不触发");
+
+  // 非 readonly 数组参数 → mutableParams 非空
+  const firstItem = findFn("firstItem")!;
+  assert(firstItem.mutableParams.length > 0, "firstItem 的 string[] 参数被检出");
+
+  // 值类型参数 → mutableParams 为空
+  const addFn = findFn("add")!;
+  assert(addFn.mutableParams.length === 0, "add 的值类型参数不触发");
+
+  // 声明了 Mutable → 不报 MutableParam 诊断
+  const pushItem = findFn("pushItem")!;
+  assert(pushItem.mutableParams.length > 0, "pushItem 有非 readonly 引用参数");
+  const pushItemDiags = findDiags("pushItem", DiagnosticKind.MutableParam);
+  assert(pushItemDiags.length === 0, "pushItem 已声明 Mutable，不报 MutableParam");
+}
+
+console.log("\n── 14. Mutable: wrappable 行为 ──");
+{
+  // 局部 push 不再报 Mutable escalation（builtin 已移除 Mutable）
+  const buildList = findFn("buildList")!;
+  const buildDiags = findDiags("buildList", DiagnosticKind.Escalation);
+  const mutableEsc = buildDiags.filter(d => d.missingCaps?.includes("Mutable"));
+  assert(mutableEsc.length === 0, "buildList 的局部 push 不报 Mutable escalation");
+
+  // 调用 Mutable 函数 → 报 absorbed（wrappable）而非 escalation
+  const addDefault = findFn("addDefault")!;
+  const escDiags = findDiags("addDefault", DiagnosticKind.Escalation).filter(d => d.missingCaps?.includes("Mutable"));
+  const absDiags = findDiags("addDefault", DiagnosticKind.Absorbed).filter(d => d.absorbedCaps?.includes("Mutable"));
+  assert(escDiags.length === 0, "addDefault 调用 Mutable 函数不报 escalation");
+  assert(absDiags.length > 0, "addDefault 调用 Mutable 函数报 absorbed", `got ${absDiags.length}`);
+}
+
 // ══ 汇总 ══
 
 console.log(`\n${"═".repeat(40)}`);

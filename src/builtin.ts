@@ -39,17 +39,17 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   isArray: [], of: [], from: [],
 
   // ── Array（变异类）──
-  push: ["Mutable"], pop: ["Mutable"], shift: ["Mutable"], unshift: ["Mutable"],
-  splice: ["Mutable"], sort: ["Mutable"], reverse: ["Mutable"],
-  fill: ["Mutable"], copyWithin: ["Mutable"],
+  push: [], pop: [], shift: [], unshift: [],
+  splice: [], sort: [], reverse: [],
+  fill: [], copyWithin: [],
 
   // ── Object ──
-  assign: ["Mutable"], freeze: ["Mutable"],
+  assign: [], freeze: [],
   hasOwnProperty: [], isPrototypeOf: [], propertyIsEnumerable: [],
 
   // ── Map / Set ──
   has: [], get: [],
-  set: ["Mutable"], delete: ["Mutable"], clear: ["Mutable"], add: ["Mutable"],
+  set: [], delete: [], clear: [], add: [],
 
   // ── Promise ──
   then: [], catch: [], finally: [],
@@ -88,7 +88,7 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
 
   // ── Stream ──
   getReader: [], read: ["Async"],
-  enqueue: ["Mutable"], close: [],
+  enqueue: [], close: [],
 
   // ── Response ──
   json: ["Async", "Fallible"], text: ["Async"],

@@ -206,5 +206,5 @@ if (format === "json") {
   console.log(formatPretty(filteredResult, scores, cwd));
 }
 
-const hasErrors = diagnostics.some(d => d.kind !== "absorbed");
+const hasErrors = diagnostics.some(d => d.kind !== "absorbed" && d.kind !== "mutable_param");
 process.exitCode = hasErrors ? 1 : 0;

@@ -27,7 +27,7 @@ export const VALID_CAPABILITY_NAMES = new Set(ALL_CAPABILITIES);
 export const ELIMINABILITY: Record<Capability, "wrappable" | "rewritable" | "isolate-only"> = {
   Fallible: "wrappable",
   Async: "wrappable",
-  Mutable: "rewritable",
+  Mutable: "wrappable",
   Impure: "rewritable",
   IO: "isolate-only",
 };

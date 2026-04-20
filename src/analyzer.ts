@@ -19,6 +19,8 @@ export enum DiagnosticKind {
   AsyncMismatch = "async_mismatch",
   /** 返回类型含 null/undefined 但未声明 Fallible */
   FallibleMismatch = "fallible_mismatch",
+  /** 函数参数含有非 readonly 引用类型，可能修改调用方状态 */
+  MutableParam = "mutable_param",
   /** 调用了 wrappable 能力的函数但未声明（suggestion） */
   Absorbed = "absorbed",
   /** 调用了未注册的函数 */
@@ -83,6 +85,14 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         functionId: id, functionName: fn.name,
         filePath: fn.filePath, line: fn.line,
         message: `'${fn.name}' 未声明能力，被视为全能力函数。请添加能力后缀（如 fetchUser_IO_Async）或 @capability 标注（纯函数用空 @capability）。`,
+      });
+    }
+    if (fn.isDeclared && !caps.has("Mutable") && fn.mutableParams.length > 0) {
+      diagnostics.push({
+        kind: DiagnosticKind.MutableParam,
+        functionId: id, functionName: fn.name,
+        filePath: fn.filePath, line: fn.line,
+        message: `'${fn.name}' 的参数 [${fn.mutableParams.join(", ")}] 是非 readonly 引用类型，可能修改调用方状态。若不修改参数，请将其标为 readonly；若确实修改，请声明 Mutable。`,
       });
     }
     effectiveCaps.set(id, caps);
@@ -164,6 +174,7 @@ function checkCall(
   if (absorbed.length > 0 && missing.length === 0) {
     const hasFallible = absorbed.includes("Fallible" as Capability);
     const hasAsync = absorbed.includes("Async" as Capability);
+    const hasMutable = absorbed.includes("Mutable" as Capability);
     
     if (hasFallible) {
       diagnostics.push({
@@ -184,6 +195,17 @@ function checkCall(
         callee: calleeName,
         absorbedCaps: ["Async" as Capability],
         message: `'${caller.name}' 调用了 Async 函数 '${calleeName}'，但未声明 Async。若调用方需要 await 本函数结果，请补充 Async 声明；否则确认已通过 task/handle 或 fire-and-forget+错误处理 模式消化了异步操作。`,
+      });
+    }
+
+    if (hasMutable) {
+      diagnostics.push({
+        kind: DiagnosticKind.Absorbed,
+        functionId: caller.id, functionName: caller.name,
+        filePath: caller.filePath, line: callLine,
+        callee: calleeName,
+        absorbedCaps: ["Mutable" as Capability],
+        message: `'${caller.name}' 调用了 Mutable 函数 '${calleeName}'，但未声明 Mutable。若传入的是局部创建的对象，变异已被消化，无需声明；否则请补充 Mutable 声明。`,
       });
     }
   }
