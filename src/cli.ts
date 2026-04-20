@@ -94,6 +94,15 @@ Capability detection rules:
             Fix: add readonly to params that aren't modified → removes Mutable → lowers score
   Async     Auto-detected from return type containing Promise/AsyncIterable
   Impure    Declared by user or propagated via call chain (non-wrappable)
+
+Workflow tip:
+  Every change should be verified by score diff. Do NOT assume a refactor lowers the score.
+  1. Run capability-lint, note totalCap + totalLoose as baseline
+  2. Make a change, run again, compare scores
+  3. Score dropped → git add (stage the win)
+  4. Score unchanged or rose → git checkout (revert, the change was ineffective)
+  Splitting a function only helps if the extracted part has FEWER capabilities.
+  Moving code between functions without reducing capabilities per function changes nothing.
 `;
 
 // ── 参数解析 ──
