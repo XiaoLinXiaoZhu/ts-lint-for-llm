@@ -207,4 +207,4 @@ if (format === "json") {
 }
 
 const hasErrors = diagnostics.some(d => d.kind !== "absorbed");
-process.exit(hasErrors ? 1 : 0);
+process.exitCode = hasErrors ? 1 : 0;
