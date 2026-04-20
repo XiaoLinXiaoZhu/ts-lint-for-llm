@@ -119,20 +119,36 @@ Elm/Redux 风格：一个纯 `transition(state, event)` 函数包含全部业务
 
 → 见 `player-statemachine.ts`
 
+### 方案 D：极致分离（xlxz 提交）
+
+把 IO 函数变成单行直通（不 await，返回 Promise），错误变成 effect 数据（不 throw），去掉 runtime 层。
+
+| 指标 | 值 |
+|------|-----|
+| 函数数 | 14 |
+| 能力负担 | **4** |
+| 松散度 | 0 |
+
+关键手法：IO 函数只做 `return engine.play(url, pos)` 不 await（不需要 Async），错误作为 `{ kind: "error" }` 返回（不需要 Fallible），没有 runtime 层（Mutable 推给调用方）。
+
+代价：调用方需要自己管理 `let state`、自己 `await` IO 返回的 Promise、自己处理 error effect。模块内部很干净，但复杂度转移到了接口之外。
+
+→ 见 `player-challenge.ts`
+
 ### 对比
 
 ```
-                 OOP     散沙 FP   状态机     你的方案
-函数数             10       29        7        ?
-能力负担          809      149      134        ?
-松散度              0        0        0        ?
+                 OOP     散沙 FP   状态机    极致分离    你的方案
+函数数             10       29        7        14        ?
+能力负担          809      149      134         4        ?
+松散度              0        0        0         0        ?
 ```
 
 ## 挑战
 
 能否写出一个方案，满足：
 
-1. **能力负担 < 134**（低于状态机版）
+1. **能力负担 < 4**（低于极致分离版）
 2. **功能完整**（8 个操作都实现）
 3. **不是散沙**（函数数合理，结构清晰可读）
 
