@@ -160,7 +160,12 @@ function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
   }
 
   if (type.isUnion()) {
-    return type.getUnionTypes().some(t => isRefType(t));
+    return type.getUnionTypes().some(t => {
+      if (!isRefType(t)) return false;
+      // union 成员是 Readonly<> 包装的引用类型 → 不算可变
+      const text = t.getText();
+      return !text.startsWith("Readonly<");
+    });
   }
 
   if (type.getCallSignatures().length > 0 && !type.getProperties().length) {

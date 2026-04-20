@@ -176,6 +176,8 @@ console.log("\n── 11. --fix 自动修复 ──");
   // 备份 violations.ts，修复后检查，再还原
   const violationsPath = resolve(import.meta.dir, "fixture/violations.ts");
   const original = readFileSync(violationsPath, "utf8");
+  const ioLayerPath = resolve(import.meta.dir, "fixture/io-layer.ts");
+  const ioLayerOriginal = readFileSync(ioLayerPath, "utf8");
   const mutablePath = resolve(import.meta.dir, "fixture/mutable.ts");
   const mutableOriginal = readFileSync(mutablePath, "utf8");
 
@@ -188,6 +190,7 @@ console.log("\n── 11. --fix 自动修复 ──");
 
   // 还原
   writeFileSync(violationsPath, original);
+  writeFileSync(ioLayerPath, ioLayerOriginal);
   writeFileSync(mutablePath, mutableOriginal);
 }
 

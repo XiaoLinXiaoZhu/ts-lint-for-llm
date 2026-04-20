@@ -1,6 +1,6 @@
 import { add } from "./pure";
 
-/** @capability Fallible Async */
+/** @capability IO Fallible Async*/
 export async function fetchUser(id: string): Promise<{ name: string } | null> {
   return { name: "Alice" };
 }
