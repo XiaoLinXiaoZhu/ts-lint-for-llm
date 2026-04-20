@@ -1,16 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
-    "lib": ["ES2022", "DOM"],
-    "types": ["node"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
-    "declaration": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "moduleResolution": "node"
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src"],
+  "exclude": ["legacy", "node_modules", "dist"]
 }
