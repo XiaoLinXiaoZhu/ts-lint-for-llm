@@ -1,8 +1,11 @@
 /**
  * 能力负担评分器
  *
- * 逐行计算嵌套深度加权，按函数+能力聚合得分。
- * score = Σ weighted_lines(fn) for all fn carrying capability C
+ * 基于 AST 语句节点计数，按函数+能力聚合得分。
+ * score = Σ weighted_statements(fn) × capability_count(fn)
+ *
+ * 每个语句节点的权重 = 1 + nesting_depth + (is_branch ? 0.5 : 0)
+ * 使用 AST 语句而非物理行，消除代码压行对评分的影响。
  */
 
 import { ALL_CAPABILITIES, VALID_CAPABILITY_NAMES, type Capability } from "../capabilities.js";
@@ -23,6 +26,15 @@ const COMPLEXITY_TYPES = new Set([
   "IfStatement", "ForStatement", "ForInStatement", "ForOfStatement",
   "WhileStatement", "DoWhileStatement", "SwitchCase", "CatchClause",
   "ConditionalExpression", "LogicalExpression",
+]);
+
+// 每个语句节点计为一个计分单元
+const STATEMENT_TYPES = new Set([
+  "ExpressionStatement", "VariableDeclaration", "ReturnStatement",
+  "ThrowStatement",
+  "IfStatement", "ForStatement", "ForInStatement", "ForOfStatement",
+  "WhileStatement", "DoWhileStatement", "SwitchStatement",
+  "BreakStatement", "ContinueStatement", "TryStatement",
 ]);
 
 const FUNCTION_TYPES = new Set([
@@ -48,11 +60,46 @@ function walkAST(node: ASTNode, visitor: (n: ASTNode) => void) {
   }
 }
 
+/** 遍历函数体，按 AST 语句节点计算加权总量 */
+function computeWeightedStatements(funcBody: ASTNode): { count: number; weighted: number } {
+  let count = 0;
+  let weighted = 0;
+
+  function walk(node: ASTNode, nestDepth: number) {
+    if (!node || typeof node !== "object") return;
+
+    if (STATEMENT_TYPES.has(node.type)) {
+      count++;
+      const branchBonus = COMPLEXITY_TYPES.has(node.type) ? 0.5 : 0;
+      weighted += 1 + nestDepth + branchBonus;
+    }
+
+    const newDepth = NESTING_TYPES.has(node.type) ? nestDepth + 1 : nestDepth;
+
+    for (const key of Object.keys(node)) {
+      if (key === "parent" || key === "loc" || key === "range") continue;
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (item && typeof (item as ASTNode).type === "string") {
+            walk(item as ASTNode, newDepth);
+          }
+        }
+      } else if (child && typeof (child as ASTNode).type === "string") {
+        walk(child as ASTNode, newDepth);
+      }
+    }
+  }
+
+  walk(funcBody, 0);
+  return { count, weighted };
+}
+
 export interface FunctionScore {
   name: string;
   line: number;
-  rawLines: number;
-  weightedLines: number;
+  statements: number;
+  weightedStatements: number;
   caps: Capability[];
   declared: boolean;
 }
@@ -65,24 +112,6 @@ export interface CapabilityResult {
 
 export function scoreCapability(source: string, ast: ASTNode): CapabilityResult {
   const lines = source.split("\n");
-  const totalLines = lines.length;
-
-  const depths = new Array(totalLines + 1).fill(0);
-  const branches = new Array(totalLines + 1).fill(false);
-  walkAST(ast, (node) => {
-    if (!node.loc) return;
-    if (NESTING_TYPES.has(node.type)) {
-      for (let l = node.loc.start.line; l <= node.loc.end.line; l++) depths[l]++;
-    }
-    if (COMPLEXITY_TYPES.has(node.type)) branches[node.loc.start.line] = true;
-  });
-
-  const lineWeights: number[] = [0];
-  for (let i = 1; i <= totalLines; i++) {
-    const trimmed = lines[i - 1].trim();
-    const isEmpty = !trimmed || trimmed === "{" || trimmed === "}" || trimmed.startsWith("//");
-    lineWeights.push(isEmpty ? 0 : 1 + depths[i] + (branches[i] ? 0.5 : 0));
-  }
 
   const functions: FunctionScore[] = [];
   walkAST(ast, (node) => {
@@ -98,7 +127,6 @@ export function scoreCapability(source: string, ast: ASTNode): CapabilityResult 
     if (!name) return;
 
     const start = node.loc.start.line;
-    const end = node.loc.end.line;
 
     const fromSuffix = name.match(CAP_SUFFIX);
     let caps: Capability[] = [];
@@ -120,15 +148,13 @@ export function scoreCapability(source: string, ast: ASTNode): CapabilityResult 
       }
     }
 
-    let rawLines = 0, weightedLines = 0;
-    for (let i = start; i <= end; i++) {
-      if (lineWeights[i] > 0) rawLines++;
-      weightedLines += lineWeights[i];
-    }
+    const body = (node as any).body;
+    const { count, weighted } = body ? computeWeightedStatements(body) : { count: 0, weighted: 0 };
 
     functions.push({
-      name, line: start, rawLines,
-      weightedLines: Math.round(weightedLines * 10) / 10,
+      name, line: start,
+      statements: count,
+      weightedStatements: Math.round(weighted * 10) / 10,
       caps: caps.sort() as Capability[], declared,
     });
   });
@@ -137,7 +163,7 @@ export function scoreCapability(source: string, ast: ASTNode): CapabilityResult 
   for (const fn of functions) {
     const assignCaps = fn.declared ? fn.caps : ALL_CAPABILITIES;
     for (const c of assignCaps) {
-      capScores[c] = (capScores[c] || 0) + fn.weightedLines;
+      capScores[c] = (capScores[c] || 0) + fn.weightedStatements;
     }
   }
   for (const k of Object.keys(capScores) as Capability[]) {
