@@ -1,0 +1,151 @@
+# 播放器挑战：在内聚和低分之间找到最优解
+
+## 命题
+
+实现一个音乐播放器模块，满足以下功能需求：
+
+- 加载播放列表（从远程获取）
+- 播放 / 暂停 / 停止
+- 上一曲 / 下一曲（支持列表循环）
+- 跳转到指定位置（seek）
+- 调节音量
+- 设置循环模式（关闭 / 单曲 / 列表）
+
+播放器有内部状态（播放列表、当前曲目索引、播放状态、音量、播放位置、循环模式），需要和外部 IO（音频引擎、曲库服务）交互。
+
+## 接口约定
+
+所有方案必须使用以下类型定义（不可修改）：
+
+```typescript
+interface Track {
+  id: string;
+  title: string;
+  artist: string;
+  url: string;
+  duration: number;
+}
+
+interface AudioEngine {
+  play(url: string, position: number): Promise<void>;
+  pause(): void;
+  setVolume(v: number): void;
+  getCurrentPosition(): number;
+}
+
+interface TrackStore {
+  fetchPlaylist(playlistId: string): Promise<Track[]>;
+}
+
+type PlayState = "playing" | "paused" | "stopped";
+type RepeatMode = "off" | "one" | "all";
+```
+
+## 功能需求
+
+1. **loadPlaylist(playlistId)**: 从 TrackStore 获取播放列表，空列表报错
+2. **play()**: 从当前位置开始播放当前曲目，空列表无操作
+3. **pause()**: 暂停播放，记录当前位置
+4. **next()**: 切到下一曲。到末尾时：repeat=all 回到第一曲，否则停止
+5. **prev()**: 如果当前位置 > 3 秒，重新播放当前曲目；否则切到上一曲。到开头时：repeat=all 跳到最后一曲
+6. **seek(position)**: 跳转到指定位置（clamp 到 0~duration）
+7. **setVolume(v)**: 设置音量（clamp 到 0~100）
+8. **setRepeatMode(mode)**: 设置循环模式
+
+## 评分规则
+
+使用 `bunx capability-report` 评分，目标是**两个维度都尽可能低**：
+
+```bash
+bunx capability-report your-solution.ts
+```
+
+5 个能力（每个声明的能力 = 加权行数计入该能力得分）：
+
+| 能力 | 什么时候需要 |
+|------|------------|
+| IO | 调用 AudioEngine 或 TrackStore 的方法 |
+| Async | 使用 await |
+| Fallible | 可能抛出错误或返回错误 |
+| Mutable | 修改外部可变状态（闭包中的 let 变量、传入的对象） |
+| Impure | 依赖隐式环境（Date.now、Math.random 等） |
+
+未声明能力的函数按 5 个全能力计算（惩罚最重）。
+
+能力声明方式：
+- 函数名后缀: `function playTrack_IO_Async(...)`
+- JSDoc: `/** @capability IO Async */`
+- 空声明 = 纯函数: `/** @capability */`
+
+## 已有方案和得分
+
+### 方案 A：内聚 OOP（基线）
+
+闭包内共享 `state` 对象，每个方法直接修改状态。
+
+| 指标 | 值 |
+|------|-----|
+| 函数数 | 10 |
+| 能力负担 | **809** |
+| 松散度 | 0 |
+
+问题：几乎每个方法都携带 IO + Async + Mutable，能力弥散严重。
+
+→ 见 `player-oop.ts`
+
+### 方案 B：散沙 FP
+
+每个操作拆成纯状态转换 + IO 调用，17 个微函数。
+
+| 指标 | 值 |
+|------|-----|
+| 函数数 | 29 |
+| 能力负担 | **149** |
+| 松散度 | 0 |
+
+问题：29 个函数太碎，理解工作流需要跳很多个。
+
+→ 见 `player-fp.ts`
+
+### 方案 C：状态机（当前最优）
+
+Elm/Redux 风格：一个纯 `transition(state, event)` 函数包含全部业务逻辑，副作用作为数据返回，由薄 IO 层执行。
+
+| 指标 | 值 |
+|------|-----|
+| 函数数 | 7 |
+| 能力负担 | **134** |
+| 松散度 | 0 |
+
+→ 见 `player-statemachine.ts`
+
+### 对比
+
+```
+                 OOP     散沙 FP   状态机     你的方案
+函数数             10       29        7        ?
+能力负担          809      149      134        ?
+松散度              0        0        0        ?
+```
+
+## 挑战
+
+能否写出一个方案，满足：
+
+1. **能力负担 < 134**（低于状态机版）
+2. **功能完整**（8 个操作都实现）
+3. **不是散沙**（函数数合理，结构清晰可读）
+
+把你的方案放在 `benchmark/` 目录下，运行：
+
+```bash
+bunx capability-report benchmark/your-solution.ts
+```
+
+## 提示
+
+分数的主要来源：
+- 每个 IO 函数的加权行数 × 能力数
+- 嵌套越深，行权重越高（`weight = 1 + depth`）
+- 纯函数（无能力）贡献 0 分——但拆成纯函数不一定降分（IO 函数行数可能不变）
+- Mutable 在有状态场景中很容易弥散——状态机模式通过"返回新状态"避免了这个问题
