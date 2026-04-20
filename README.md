@@ -120,79 +120,126 @@ function add(a: number, b: number): number {
 
 ## 如何降低分数
 
-### 第一步：声明能力（降幅最大）
+### 核心原则
 
-未声明的函数被视为全能力（×5），声明后只计实际能力。这通常能一次降 60-80%。
+**每一步修改后都要跑报告验证分数是否下降。如果没有下降，这次修改就是无效的，应该撤回。**
 
-```typescript
-// 前：未声明，加权行 120 × 5能力 = 600 分
-async function fetchUser(id: string) { ... }
+```bash
+# 修改前：记录基线
+bunx capability-report src/session.ts
+# → TOTAL 135.0
 
-// 后：声明了 2 个能力，120 × 2 = 240 分（-60%）
-/** @capability IO Fallible */
-async function fetchUser(id: string) { ... }
+# 修改后：验证降分
+bunx capability-report src/session.ts
+# → TOTAL 82.0  ✅ 降了，保留
+# → TOTAL 135.0 ❌ 没降，撤回这次修改
 ```
 
-### 第二步：拆分函数、隔离能力
+支持单文件聚焦：
 
-把一个大函数拆成多个小函数，每个只携带必要的能力。
+```bash
+# 只检查一个文件
+bunx capability-report src/runtime.ts
+
+# 检查几个相关模块
+bunx capability-report src/runtime.ts src/session.ts src/prompt.ts
+
+# 检查整个目录
+bunx capability-report src/
+```
+
+### 什么有效、什么无效
+
+**无效：简单提取模板/表达式为纯函数**
+
+把 `console.log(\`hello ${name}\`)` 拆成 `formatGreeting()` + `console.log(formatGreeting())`，IO 函数的加权行数不变（一行换一行），纯函数贡献 0 分。总分不变。
 
 ```typescript
-// 前：一个函数做校验 + IO + 哈希，携带 IO + Fallible + Impure
-/** @capability IO Fallible Impure */
-async function registerUser(input: UserInput): Promise<User> {
-  if (!input.email.includes("@")) throw new Error("bad email");
-  const hash = crypto.createHash("sha256").update(input.password).digest("hex");
-  return await db.users.create({ ...input, passwordHash: hash });
+// 前：30 分
+/** @capability IO Async Fallible */
+async function startServer_IO_Async_Fallible() {
+  console.log(`[v11] Starting...`);
+  console.log(`[v11] Model: ${config.model}`);
+  await db.connect();
 }
 
-// 后：拆成三个函数
+// 后：仍然 30 分——提取模板没有降分
+/** @capability */
+function formatModel(model: string): string { return `[v11] Model: ${model}`; }
+
+/** @capability IO Async Fallible */
+async function startServer_IO_Async_Fallible() {
+  console.log(`[v11] Starting...`);
+  console.log(formatModel(config.model));  // 一行换一行，加权不变
+  await db.connect();
+}
+```
+
+**有效：系统性重构，减少能力弥散**
+
+能力弥散 = 一个函数携带了多种本不必要的能力。降分的关键是**让每个函数只携带它真正需要的能力**。
+
+```typescript
+// 前：一个函数同时做校验(Fallible) + 哈希(Impure) + 存储(IO)
+// 3 个能力 × 30 加权行 = 90 分
+/** @capability IO Fallible Impure */
+async function createUser_IO_Fallible_Impure(input: UserInput): Promise<User> {
+  if (!input.email.includes("@")) throw new Error("bad");    // Fallible
+  const hash = crypto.hash("sha256", input.password);         // Impure
+  return await db.users.create({ ...input, hash });            // IO
+}
+
+// 后：三个函数各携带一种能力
+// Fallible: 1能力 × 4行 = 4，Impure: 1能力 × 2行 = 2，IO: 1能力 × 3行 = 3
+// 总分 = 9（降 90%）
 /** @capability Fallible */
 function validateEmail(email: string): string | null {
-  return email.includes("@") ? null : "invalid email";
+  if (!email.includes("@")) return "invalid";
+  return null;
 }
 
 /** @capability Impure */
-function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex");
+function hashPassword_Impure(password: string): string {
+  return crypto.hash("sha256", password);
 }
 
-/** @capability IO Fallible */
-async function registerUser_IO_Fallible(input: ValidatedInput): Promise<User> {
-  return await db.users.create({ ...input, passwordHash: hashPassword(input.password) });
-}
-```
-
-### 第三步：提取纯函数
-
-纯函数（无能力）对能力负担贡献为 **零**。把计算逻辑从有能力的函数中提取出来。
-
-```typescript
-// 纯函数：不管多复杂，能力负担 = 0
-/** @capability */
-function buildEmailBody(name: string, role: string): string {
-  // 50 行复杂的字符串拼接逻辑...
-  return body;
+/** @capability IO */
+async function insertUser_IO(data: { email: string; hash: string }): Promise<User> {
+  return await db.users.create(data);
 }
 ```
 
-### 第四步：收窄类型（降低松散度）
+关键区别：不是"提取表达式"，而是**把不同能力的代码段分离到不同函数中**。每个函数的能力数从 3 降到 1，这才是真正的降分。
 
-```typescript
-// 前：松散度 +10
-function process(data: any) { ... }
+### 降分策略（按收益排序）
 
-// 后：松散度 0
-function process(data: UserInput) { ... }
+**第一步：声明能力**
+
+未声明的函数被视为全能力（×5），声明后只计实际能力。这通常一次降 60-80%。
+
+```bash
+# 从报告中找到最高分的未声明函数
+bunx capability-report src/
+# ⚠ src/runtime.ts:18  startRuntime  (weighted: 292)
+
+# 给它加上 @capability，重跑确认降分
 ```
 
-```typescript
-// 前：布尔参数，松散度 +2，调用处 process(data, true) 无语义
-function process(data: UserInput, sendEmail: boolean) { ... }
+**第二步：拆分多能力函数**
 
-// 后：枚举参数，松散度 0，调用处 process(data, "send-email") 自解释
-function process(data: UserInput, notify: "send-email" | "skip") { ... }
-```
+找到携带 3+ 个能力的函数，按能力边界拆开。每减少一个能力 = 加权行数不再计入该能力得分。
+
+**第三步：IO 薄层化**
+
+IO 函数应该尽可能薄——只做数据进出，不做计算。计算逻辑提取为纯函数（贡献 0 分）。
+
+**第四步：Parse don't validate（消除 Fallible 传播）**
+
+在边界层把输入校验为窄类型，下游函数不再需要 Fallible。
+
+**第五步：收窄松散类型**
+
+用具体类型替代 `any`、用枚举替代 `boolean` 参数。
 
 ## 为外部模块定义能力
 
