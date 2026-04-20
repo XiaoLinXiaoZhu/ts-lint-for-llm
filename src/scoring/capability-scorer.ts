@@ -44,18 +44,18 @@ const FUNCTION_TYPES = new Set([
 const CAP_SUFFIX = /_((?:IO|Async|Fallible|Mutable|Impure)(?:_(?:IO|Async|Fallible|Mutable|Impure))*)$/;
 const JSDOC_CAP = /@capability(?:\s+(.*))?/;
 
-function walkAST(node: ASTNode, visitor: (n: ASTNode) => void) {
+function walkAST(node: ASTNode, visitor: (n: ASTNode, parent: ASTNode | null) => void, parent: ASTNode | null = null) {
   if (!node || typeof node !== "object") return;
-  visitor(node);
+  visitor(node, parent);
   for (const key of Object.keys(node)) {
     if (key === "parent" || key === "loc" || key === "range") continue;
     const child = node[key];
     if (Array.isArray(child)) {
       for (const item of child) {
-        if (item && typeof (item as ASTNode).type === "string") walkAST(item as ASTNode, visitor);
+        if (item && typeof (item as ASTNode).type === "string") walkAST(item as ASTNode, visitor, node);
       }
     } else if (child && typeof (child as ASTNode).type === "string") {
-      walkAST(child as ASTNode, visitor);
+      walkAST(child as ASTNode, visitor, node);
     }
   }
 }
@@ -114,15 +114,16 @@ export function scoreCapability(source: string, ast: ASTNode): CapabilityResult 
   const lines = source.split("\n");
 
   const functions: FunctionScore[] = [];
-  walkAST(ast, (node) => {
+  walkAST(ast, (node, parent) => {
     if (!FUNCTION_TYPES.has(node.type) || !node.loc) return;
     let name: string | null = null;
     if (node.type === "FunctionDeclaration") {
       name = (node as any).id?.name ?? null;
-    } else {
-      const line = lines[node.loc.start.line - 1];
-      const m = line.match(/(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/);
-      if (m) name = m[1];
+    } else if (
+      parent?.type === "VariableDeclarator" &&
+      (parent as any).id?.type === "Identifier"
+    ) {
+      name = (parent as any).id.name;
     }
     if (!name) return;
 
