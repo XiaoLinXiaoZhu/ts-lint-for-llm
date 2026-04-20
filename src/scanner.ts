@@ -110,9 +110,17 @@ function checkReturnsAsync(node: FunctionDeclaration | ArrowFunction | FunctionE
 
 function checkReturnsNullable(node: FunctionDeclaration | ArrowFunction | FunctionExpression): boolean {
   const retType = node.getReturnType();
-  if (retType.isNull() || retType.isUndefined()) return true;
-  if (retType.isUnion()) {
-    return retType.getUnionTypes().some(t => t.isNull() || t.isUndefined());
+  return typeIsNullable(retType);
+}
+
+function typeIsNullable(type: import("ts-morph").Type): boolean {
+  if (type.isNull() || type.isUndefined()) return true;
+  if (type.isUnion()) {
+    return type.getUnionTypes().some(t => t.isNull() || t.isUndefined());
+  }
+  // Promise<T | null> — check type arguments
+  for (const arg of type.getTypeArguments()) {
+    if (typeIsNullable(arg)) return true;
   }
   return false;
 }
