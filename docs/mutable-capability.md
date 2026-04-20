@@ -6,98 +6,123 @@
 Mutable: "修改参数或外部可变状态"
 ```
 
-当前实现通过 builtin 方法名检测：凡是调用了 `push`、`sort`、`splice`、`set`、`delete` 等方法的函数，都被标记为需要 Mutable 能力。Mutable 被归类为 `rewritable`（不可消化），调用 Mutable 函数而自身未声明 Mutable 时报 escalation 错误。
+当前实现通过 builtin 方法名检测：凡是调用了 `push`、`sort`、`splice`、`set` 等方法的函数，都被标记为需要 Mutable 能力。Mutable 被归类为 `rewritable`（不可消化），调用 Mutable 函数而自身未声明 Mutable 时报 escalation 错误。
 
 ## 问题
 
 这个检测机制把**内部实现细节**当成了**外部可观察效果**。
 
-### 误报案例（来自 ChatFrame 项目）
+### Demo 实测（docs/demo/player.ts）
 
-```typescript
-// 误报 1: sort 作用在副本上，原数组未被修改
-/** @capability */
-function sortedOffsets(offsets: Offset[]): Offset[] {
-  return [...offsets].sort((a, b) => a.charOffset - b.charOffset);
-}
-// → 报错：缺少 Mutable。实际上这是纯函数。
+一个 21 函数的音乐播放器，12 个纯函数 + 9 个真正修改参数的 Mutable 函数。
 
-// 误报 2: set 作用在局部创建的 Map 上
-/** @capability Mutable */  // 被迫声明
-function buildTasksMap(list: ImageTaskInfo[]): Map<string, ImageTaskInfo> {
-  const m = new Map<string, ImageTaskInfo>();
-  if (list) for (const t of list) m.set(t.id, t);
-  return m;
-}
-// → 用户被迫声明 Mutable。实际上这是纯函数——m 是局部创建的。
+当前方案（方法名检测）的结果：
 
-// 误报 3: push 在局部数组上，参数全是 string
-/** @capability Mutable */  // 被迫声明
-function checkXmlTags(content: string): string[] {
-  const issues: string[] = [];
-  if (/<diary/i.test(content)) issues.push("混入 <diary> 标签");
-  ...
-  return issues;
-}
-// → 被迫声明 Mutable。参数是 string，不可能被修改。issues 是局部数组。
+```
+withTrackAdded       纯函数（[...spread].push）      → 误报为 Mutable
+withPlaylistSorted   纯函数（[...spread].sort）       → 误报为 Mutable
+buildQueue           纯函数（局部数组 push）            → 误报为 Mutable
+deduplicatePlaylist  纯函数（局部 Set.add + push）     → 误报为 Mutable
+topArtists           纯函数（局部 Map.set + sort）     → 误报为 Mutable
+addToPlaylist        Mutable（state.playlist.push）   → 漏检（push 不看 receiver）
+removeFromPlaylist   Mutable（state.playlist.splice） → 漏检
+play/pause/next/...  Mutable（state.xxx = ...）       → 漏检（赋值不在方法名表中）
 ```
 
-### 误标的传播效应
+| | 精确率 | 召回率 |
+|---|---|---|
+| 当前（方法名） | 0% | 0% |
 
-由于 Mutable 当前是 `rewritable`（报 escalation 错误），`--fix` 会自动向上传播 Mutable 声明。这导致了大量纯函数被标记为 Mutable：
+精确率 0%：标记的 5 个全是误报。召回率 0%：9 个真 Mutable 全部漏检（它们通过赋值修改参数属性，不走 push/sort）。
 
-ChatFrame 项目实测：44 个函数声明了 Mutable，其中大量参数全是值类型（string/number/boolean），例如：
-- `mkTimeJump(from: string, to: string, desc: string)` — 只是构造一个对象返回
-- `emitBanner(stepName: string)` — 只是打印日志
-- `checkXmlTags(content: string)` — 只是做正则检测
-
-这些函数的 Mutable 是被 `--fix` 注入的，因为它们间接调用了含 `push` 的函数。**Mutable 声明已经失去了语义——它不再表示"修改调用方状态"，而是表示"调用链中某处有个 push"。**
-
-### 真正的 Mutable
-
-```typescript
-// 真 Mutable: 修改了调用方传入的对象
-/** @capability Mutable */
-function pushChunk(chunks: string[], c: string): void {
-  chunks.push(c);
-}
-// → chunks 是调用方的数据，push 修改了它。
-
-// 真 Mutable: 修改了外部共享状态
-/** @capability IO Mutable */
-function resetSession(ctx: Ctx): void {
-  ctx.session = createSession({ ... });
-}
-// → ctx 是外部共享状态，赋值改变了它。
-```
-
-核心区别：**变异是否逃逸出函数边界**。
+**方法名检测完全失效——既标不准，也查不到。**
 
 ## Mutable 的正确语义
 
-参考 Koka 和 Haskell 的效果系统：
+参考 Koka（`st<h>` 效果可被 `run` 消解）和 Haskell（`ST` monad 的 `runST` 保证局部变异不逃逸）：
 
-- Koka 的 `st<h>` 效果：变异绑定到堆区域 `h`。`run { var x := 0; x := x + 1; x }` 是纯的——局部堆被 `run` 消解，`st` 效果不逃逸。
-- Haskell 的 `ST` monad：`runST :: (forall s. ST s a) -> a`，类型系统保证可变状态不逃逸，对外呈现纯接口。
+> **变异只有逃逸出函数边界时才是效果。**
 
-这两个系统的共识：**变异只有逃逸出函数边界时才是效果。** 局部变量的变异是实现细节，不是能力需求。
-
-### 修正后的定义
+修正后的定义：
 
 ```
-Mutable: 函数可能修改调用方可见的状态——参数对象、闭包捕获的外部变量、模块级变量。
-         对函数内部创建的局部对象做任何变异操作，不算 Mutable。
+Mutable: 函数可能修改调用方可见的状态。
+         判断标准：调用前后，调用方持有的数据是否可能发生变化。
+         局部变量的变异是实现细节，不算 Mutable。
 ```
 
-判断标准：如果把函数看作黑盒，调用前后**调用方持有的数据**是否可能发生变化？
-- 是 → Mutable
-- 否 → 不是 Mutable（即使函数内部用了 push/sort/splice）
+## 检测方案：readonly 参数类型
+
+如果函数参数是 `readonly`，TypeScript 编译器**在编译期保证**该参数不被修改。因此：
+
+- 参数是 `readonly T[]` / `Readonly<T>` → 不可能修改调用方状态 → 不标记 Mutable
+- 参数是 `T[]` / `T`（非 readonly 引用类型） → 可能修改 → 标记为可能 Mutable
+
+### Demo 对比
+
+同一个播放器，纯函数的参数加上 readonly（见 `docs/demo/player-readonly.ts`）：
+
+```typescript
+// 改前                                    // 改后
+function totalDuration(playlist: Track[])  →  function totalDuration(playlist: readonly Track[])
+function currentTrack(state: PlayerState)  →  function currentTrack(state: Readonly<PlayerState>)
+function topArtists(history: Track[])      →  function topArtists(history: readonly Track[])
+```
+
+三种方案在 demo 上的表现：
+
+| 方案 | 精确率 | 召回率 | 误报 | 漏检 |
+|---|---|---|---|---|
+| 当前（方法名检测） | **0%** | **0%** | 5 | 9 |
+| readonly（不改代码） | 47% | **100%** | 10 | 0 |
+| readonly（纯函数加 readonly） | **100%** | **100%** | **0** | **0** |
+
+关键发现：**只要代码正确使用了 readonly，检测精确率达到 100%。**
+
+### readonly 会不会有负面效果？
+
+#### 级联问题
+
+```typescript
+function helper(arr: string[]) { /* 只读取 */ }
+function main(items: readonly string[]) {
+  helper(items); // TS 编译错误：readonly string[] 不能赋给 string[]
+}
+```
+
+改 `items` 为 readonly 会迫使 `helper` 也改为接受 readonly。这种级联是真实存在的。
+
+但这个级联**恰好是我们想要的效果**——它迫使整个调用链显式声明"我不会修改你的数据"。这与 capability-lint 的核心理念一致：让效果在函数签名中可见。
+
+#### 对 LLM 使用者的影响
+
+本工具的目标用户是 LLM agent，不是人类。对 LLM 来说：
+
+1. **readonly 语法的额外复杂度可以忽略**——LLM 不会因为多打几个字而疲劳
+2. **readonly 级联不是负担而是信号**——编译器自动追踪哪些函数需要改，LLM 只需按错误修复
+3. **readonly 防止作弊**——如果依赖"自觉声明 Mutable"，LLM 为了分数低可以不诚实地省略声明。而 readonly 有编译器保证：你说了 readonly 就不能改，说谎会编译失败
+
+#### 与 TS 生态的兼容性
+
+少数标准库 API 不接受 readonly 参数（如某些 `Array.from` 重载）。实测中 `docs/demo/player-readonly.ts` 编译零错误，说明常见模式没有兼容问题。
+
+深度 readonly（`Readonly<T>` 只冻结一层）确实需要注意，但大多数场景只需要顶层 readonly（`readonly Track[]`），不需要深度递归。
+
+### 误伤分析
+
+"非 readonly 引用参数"不等于"一定修改参数"——可能只是读取。这类函数会被误标。
+
+**但这个误伤有明确的消除路径：加 readonly。** 这不是绕路的 workaround，而是**更好的代码**——readonly 参数显式声明了"我不修改你的数据"，是正确的编程实践。
+
+对 LLM 来说，收到"此函数参数未标记 readonly，可能是 Mutable"的提示后，有两个选择：
+1. 加 readonly → 消除标记，证明函数是纯的
+2. 确认函数确实修改参数 → 声明 Mutable
+
+两个选择都指向更好的代码。
 
 ## Mutable 的可消化性
 
-当前分类是 `rewritable`（不可消化，必须向上传播），这是错的。
-
-Mutable 是**可消化的（wrappable）**，和 Fallible、Async 一样：
+Mutable 应该从 `rewritable` 改为 `wrappable`（可消化），和 Fallible、Async 一致：
 
 | 能力 | 消化方式 | 例子 |
 |------|---------|------|
@@ -105,108 +130,9 @@ Mutable 是**可消化的（wrappable）**，和 Fallible、Async 一样：
 | Async | fire-and-forget、task 模式 | `void asyncFn()` |
 | Mutable | 传入局部创建的对象 | `const arr = []; mutatingFn(arr); return arr` |
 
-如果 caller 只把自己创建的局部对象传给 Mutable 子函数，变异不逃逸，caller 不需要声明 Mutable。
+## 实施步骤
 
-## 检测方案评估
-
-### 方案 A：非 readonly 引用参数 = 可能 Mutable
-
-思路：如果函数参数是非 readonly 的引用类型（对象/数组/Map/Set），就标记为可能 Mutable。用户通过加 readonly 消除标记。
-
-**ChatFrame 实测数据：**
-
-| 指标 | 数量 | 占比 |
-|------|------|------|
-| 总函数 | 185 | 100% |
-| 有非 readonly 引用参数 | 79 | 43% |
-| 实际声明 Mutable 的 | 44 | 24% |
-| **误伤（被标记但不是 Mutable）** | **35** | **44% 的标记是误伤** |
-
-43% 的函数会被标记，其中近一半是误伤。典型误伤：
-
-```typescript
-// 只读取 story 的属性，从不修改
-function buildSystemPrompt(story: Story): string {
-  return `${story.premise}\n\n---\n\n${story.writingRules}`;
-}
-// → 被标记：story 是非 readonly 引用参数
-```
-
-#### readonly 的连锁反应
-
-强制加 readonly 会产生**级联效应**：
-
-```typescript
-// 如果 buildSystemPrompt 改为 readonly
-function buildSystemPrompt(story: Readonly<Story>): string { ... }
-
-// 那么调用它的函数也必须传 Readonly<Story>
-function buildChatMessages(story: Readonly<Story>, ...): LLMMessage[] {
-  buildSystemPrompt(story); // OK
-}
-
-// 再向上传播...
-function createSession(config: { story: Readonly<Story>, ... }): SessionHandle { ... }
-```
-
-ChatFrame 中有 60 个引用类型参数，其中仅 13 个是 readonly。要全部改完需要修改 47 个参数声明，且每一个都可能触发下游的级联修改。
-
-#### readonly 的实际困难
-
-1. **TS 标准库不一致**：`Array.from(readonlyArr)` 某些重载不接受 readonly 数组
-2. **深度 readonly 语法冗长**：`Readonly<Story>` 只冻结一层，深层对象要 `DeepReadonly<Story>`，TS 没有内置这个类型
-3. **泛型函数**：`function first<T>(arr: T[]): T` 改成 `arr: readonly T[]` 后，返回类型推断可能变化
-4. **第三方库**：大量库的函数签名不接受 readonly 参数
-
-#### 结论：**不采用**。误伤率过高，级联改动成本大，与 TS 生态的现实不匹配。
-
-### 方案 B：保持方法名检测 + Mutable 改为 wrappable
-
-思路：保留当前的 push/sort/set 检测，但把 Mutable 从 escalation（错误）降级为 absorbed（建议）。
-
-优点：改动最小（一行代码）。
-缺点：`const arr = []; arr.push(x)` 仍会产生 absorbed 建议，只是从错误变成了警告。噪声仍然很大——这些建议没有可操作性，因为局部 push 根本不需要任何修改。
-
-#### 结论：**治标不治本**。Mutable 改为 wrappable 是对的，但如果检测机制不改，噪声仍然很高。
-
-### 方案 C：移除 builtin Mutable 标记，纯依赖显式声明
-
-思路：从 builtin 表中移除所有 Mutable 标记。push/sort/set 不再自动触发任何 Mutable 诊断。Mutable 完全由用户显式声明（`@capability Mutable` 或后缀 `_Mutable`），工具只验证传播关系。
-
-优点：
-- **零噪声**：不会因为内部 push 产生任何诊断
-- **改动小**：只需清除 builtin 表中的 Mutable 标记
-
-缺点：
-- **无法发现未声明的 Mutable**：如果函数修改了参数但没声明 Mutable，工具不会报错
-- 依赖用户自觉（但 IO/Impure 也一样依赖用户自觉——你在函数里手动发 HTTP 请求但不声明 IO，工具也无法检测）
-
-#### 结论：**可行的即时方案**。与 IO/Impure 的检测模式一致（都依赖显式声明或调用链传播），消除了全部误报。
-
-### 方案 D：轻量级逃逸分析（未来增强）
-
-思路：在 scanner 中追踪 push/sort/set 的接收者对象（receiver），判断它是函数参数还是局部变量。只有当变异方法的 receiver 是参数时才标记 Mutable。
-
-```
-param.push(x)         → Mutable（param 是函数参数）
-localArr.push(x)      → 不标记（localArr 是局部变量）
-this.field.push(x)    → Mutable（this 是外部状态）
-```
-
-优点：精准，几乎无误报。
-缺点：
-- 实现复杂（需要追踪变量来源，处理别名、解构、展开运算符）
-- 仍无法覆盖所有情况（如 `const ref = param; ref.push(x)` 的别名情况）
-
-#### 结论：**最优长期方案**，但实现成本高，可作为未来增强。
-
-## 推荐实施路径
-
-**第一步（立即）**：方案 C + Mutable wrappable
-1. `capabilities.ts`：Mutable 改为 `wrappable`
-2. `builtin.ts`：移除所有 Mutable 标记（push/sort/splice/set/... → `[]`）
-3. 效果：Mutable 完全由用户显式声明 + 调用链传播。调用 Mutable 函数不声明时报 absorbed 建议
-
-**第二步（未来）**：方案 D 增强
-1. `scanner.ts`：分析变异方法的 receiver 是否为函数参数
-2. 自动检测未声明的参数变异，减少对用户自觉的依赖
+1. **capabilities.ts**：Mutable 改为 `wrappable`
+2. **builtin.ts**：移除所有 Mutable 标记（push/sort/splice/set/... → `[]`），因为方法名检测完全失效
+3. **scanner.ts**：新增参数可变性检测——检查函数参数是否包含非 readonly 的引用类型，标记为 `hasMutableParams`
+4. **analyzer.ts**：对 `hasMutableParams` 的函数生成新诊断，提示用户加 readonly 或声明 Mutable
