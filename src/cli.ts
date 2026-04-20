@@ -82,7 +82,7 @@ const result = analyze(scan);
 const project = new Project({ tsConfigFilePath: tsConfigPath });
 const loosenessResults = new Map<string, ReturnType<typeof scoreLooseness>>();
 for (const sf of project.getSourceFiles()) {
-  if (sf.getFilePath().includes("node_modules")) continue;
+  if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
   loosenessResults.set(sf.getFilePath(), scoreLooseness(sf));
 }
 

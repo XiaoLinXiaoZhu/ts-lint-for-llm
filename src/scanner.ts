@@ -266,13 +266,13 @@ export function scanProject(tsConfigPath: string): ProjectScan {
 
   // 第一遍：收集所有函数声明
   for (const sf of project.getSourceFiles()) {
-    if (sf.getFilePath().includes("node_modules")) continue;
+    if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
     scanFileDeclarations(sf, register);
   }
 
   // 第二遍：解析调用目标
   for (const sf of project.getSourceFiles()) {
-    if (sf.getFilePath().includes("node_modules")) continue;
+    if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
     resolveFileCalls(sf, functions, byName);
   }
 
