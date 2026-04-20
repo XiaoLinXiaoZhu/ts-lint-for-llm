@@ -75,8 +75,16 @@ export default [
 | 信号 | 权重 | 说明 |
 |------|------|------|
 | `any` | 10 | 完全无约束 |
+| `@ts-ignore` / `@ts-expect-error` | 10 | 整行跳过类型检查 |
+| `as any` | 8 | 类型断言绕过检查 |
 | `Record<string, any>` | 8 | 键值都无约束 |
+| `Object` (大写) | 8 | TS 官方不推荐，约等于 any |
+| `Function` (大写) | 6 | 无参数/返回值信息 |
+| `object` (小写) | 5 | 无结构信息 |
+| `{}` (空类型字面量) | 5 | 约等于 object |
+| `Record<string, unknown>` | 5 | 无结构但值需收窄 |
 | `unknown` | 3 | 比 any 好，但仍需运行时收窄 |
+| `x!` 非空断言 | 2 | 绕过 null 检查 |
 | 函数参数 `boolean` | 2 | 调用处 true/false 无语义 |
 | 可选字段 `?` | 1 | 缺失语义可能模糊 |
 
