@@ -181,13 +181,14 @@ export function formatPretty(result: AnalysisResult, scores: ScoreSummary, cwd: 
   for (const [file, diags] of [...byFile.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     lines.push(`\n${file}`);
     for (const d of diags.sort((a, b) => a.line - b.line)) {
-      const sev = d.kind === DiagnosticKind.Absorbed ? "warn " : "error";
+      const sev = (d.kind === DiagnosticKind.Absorbed || d.kind === DiagnosticKind.MutableParam) ? "warn " : "error";
       lines.push(`  ${String(d.line).padStart(4)}  ${sev}  ${d.message}`);
     }
   }
 
-  const errors = result.diagnostics.filter(d => d.kind !== DiagnosticKind.Absorbed).length;
-  const warnings = result.diagnostics.filter(d => d.kind === DiagnosticKind.Absorbed).length;
+  const isWarning = (d: Diagnostic) => d.kind === DiagnosticKind.Absorbed || d.kind === DiagnosticKind.MutableParam;
+  const errors = result.diagnostics.filter(d => !isWarning(d)).length;
+  const warnings = result.diagnostics.filter(d => isWarning(d)).length;
   lines.push(`\n✖ ${result.diagnostics.length} problems (${errors} errors, ${warnings} warnings)`);
 
   // 评分

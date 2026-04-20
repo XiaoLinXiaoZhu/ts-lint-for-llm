@@ -7,7 +7,7 @@
  * - 函数体内的所有调用（含跨文件解析）
  */
 
-import { Project, SyntaxKind, Node, type SourceFile, type FunctionDeclaration, type ArrowFunction, type FunctionExpression, type VariableDeclaration, type CallExpression } from "ts-morph";
+import { Project, SyntaxKind, Node, type SourceFile, type FunctionDeclaration, type ArrowFunction, type FunctionExpression, type VariableDeclaration, type CallExpression, type ParameterDeclaration } from "ts-morph";
 import { resolve } from "node:path";
 import { loadCapFiles, type ExternalCapEntry } from "./cap-file.js";
 import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, type Capability } from "./capabilities.js";
@@ -35,6 +35,8 @@ export interface FunctionInfo {
   returnsAsync: boolean;
   /** 返回类型是否含 null/undefined */
   returnsNullable: boolean;
+  /** 非 readonly 的引用类型参数名列表（可能修改调用方状态） */
+  mutableParams: string[];
   /** 函数体内调用的函数 ID 列表（已解析的）+ 未解析的方法名列表 */
   resolvedCalls: CallSite[];
   unresolvedCalls: CallSite[];
@@ -133,6 +135,60 @@ function typeIsNullable(type: import("ts-morph").Type): boolean {
     if (typeIsNullable(arg)) return true;
   }
   return false;
+}
+
+// ── 参数可变性检测 ──
+
+function detectMutableParams(params: ParameterDeclaration[]): string[] {
+  const result: string[] = [];
+  for (const param of params) {
+    if (isNonReadonlyRefParam(param)) {
+      result.push(param.getName());
+    }
+  }
+  return result;
+}
+
+function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
+  const type = param.getType();
+
+  if (type.isString() || type.isNumber() || type.isBoolean() ||
+      type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
+      type.isUndefined() || type.isNull() || type.isVoid() ||
+      type.isEnum() || type.isEnumLiteral()) {
+    return false;
+  }
+
+  if (type.isUnion()) {
+    return type.getUnionTypes().some(t => isRefType(t));
+  }
+
+  if (type.getCallSignatures().length > 0 && !type.getProperties().length) {
+    return false;
+  }
+
+  const typeNode = param.getTypeNode();
+  if (typeNode) {
+    const text = typeNode.getText();
+    if (/^(readonly\s|Readonly<|ReadonlyArray<|ReadonlyMap<|ReadonlySet<)/.test(text)) {
+      return false;
+    }
+  }
+
+  return isRefType(type);
+}
+
+function isRefType(type: import("ts-morph").Type): boolean {
+  if (type.isString() || type.isNumber() || type.isBoolean() ||
+      type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
+      type.isUndefined() || type.isNull() || type.isVoid() ||
+      type.isEnum() || type.isEnumLiteral()) {
+    return false;
+  }
+  if (type.isUnion()) {
+    return type.getUnionTypes().some(t => isRefType(t));
+  }
+  return type.isObject() || type.isArray() || type.isInterface();
 }
 
 // ── 语句权重计算 ──
@@ -304,6 +360,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
       declaredCaps: caps, isDeclared,
       returnsAsync: checkReturnsAsync(fn),
       returnsNullable: checkReturnsNullable(fn),
+      mutableParams: detectMutableParams(fn.getParameters()),
       resolvedCalls: [], unresolvedCalls: [],
       weightedStatements: weighted, statementCount: count,
     });
@@ -327,6 +384,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
       declaredCaps: caps, isDeclared,
       returnsAsync: checkReturnsAsync(init),
       returnsNullable: checkReturnsNullable(init),
+      mutableParams: detectMutableParams(init.getParameters()),
       resolvedCalls: [], unresolvedCalls: [],
       weightedStatements: weighted, statementCount: count,
     });
