@@ -8,7 +8,7 @@
 export const CAPABILITY_WORDS = {
   IO: "读写外部系统（网络、文件、数据库）",
   Fallible: "可能失败（校验失败、解析失败、网络错误）",
-  Mutable: "修改参数或外部可变状态",
+  Mutable: "参数含非 readonly 引用类型（可能修改调用方数据）",
   Async: "返回 Promise/AsyncIterable，调用方需要 await",
   Impure: "依赖隐式环境（时间、随机数、全局变量）",
 } as const;

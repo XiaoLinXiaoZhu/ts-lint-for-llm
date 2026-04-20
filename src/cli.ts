@@ -84,6 +84,16 @@ Examples:
 Exit codes:
   0  No errors (absorbed warnings are OK)
   1  Errors found (escalation, mismatch, undeclared, unregistered)
+
+Capability detection rules:
+  IO        Declared by user or propagated via call chain (non-wrappable)
+  Fallible  Auto-detected from return type containing null/undefined
+  Mutable   Auto-detected from non-readonly reference type parameters
+            (e.g. items: string[] triggers Mutable; items: readonly string[] does not)
+            Local push/sort/splice does NOT trigger Mutable — only parameter types matter
+            Fix: add readonly to params that aren't modified → removes Mutable → lowers score
+  Async     Auto-detected from return type containing Promise/AsyncIterable
+  Impure    Declared by user or propagated via call chain (non-wrappable)
 `;
 
 // ── 参数解析 ──

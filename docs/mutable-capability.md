@@ -1,41 +1,38 @@
-# Mutable 能力：定义、问题与重新设计
+# Mutable 能力
 
-## 当前定义
+## 检测规则
+
+Mutable 通过**参数类型**检测，不通过方法名：
+
+- 函数参数是非 readonly 的引用类型（对象/数组/Map/Set/接口） → 自动注入 Mutable
+- 函数参数是 `readonly T[]`、`Readonly<T>`、`ReadonlyArray<T>` 等 → 不标记
+- 函数参数是值类型（string/number/boolean） → 不标记
+- 函数内部对局部变量的 push/sort/splice/set 操作 → **不触发任何 Mutable 标记**
+
+消除 Mutable 的方式：将参数改为 readonly。这有编译器保证——readonly 参数不能被修改，无法作弊。
 
 ```typescript
-Mutable: "修改参数或外部可变状态"
+// 自动标记 Mutable（items 是非 readonly 数组）
+function first(items: string[]): string { return items[0]; }
+
+// 不标记 Mutable（readonly 数组）
+function first(items: readonly string[]): string { return items[0]; }
+
+// 不标记 Mutable（局部 push，和参数类型无关）
+function buildList(): number[] {
+  const arr: number[] = [];
+  arr.push(1, 2, 3);
+  return arr;
+}
 ```
 
-当前实现通过 builtin 方法名检测：凡是调用了 `push`、`sort`、`splice`、`set` 等方法的函数，都被标记为需要 Mutable 能力。Mutable 被归类为 `rewritable`（不可消化），调用 Mutable 函数而自身未声明 Mutable 时报 escalation 错误。
+## 可消化性
 
-## 问题
+Mutable 是 wrappable（可消化），和 Fallible、Async 一样。调用 Mutable 函数时，如果传入的是局部创建的对象，变异不逃逸，产生 absorbed 建议而非 escalation 错误。
 
-这个检测机制把**内部实现细节**当成了**外部可观察效果**。
+## 历史：为什么不用方法名检测
 
-### Demo 实测（docs/demo/player.ts）
-
-一个 21 函数的音乐播放器，12 个纯函数 + 9 个真正修改参数的 Mutable 函数。
-
-当前方案（方法名检测）的结果：
-
-```
-withTrackAdded       纯函数（[...spread].push）      → 误报为 Mutable
-withPlaylistSorted   纯函数（[...spread].sort）       → 误报为 Mutable
-buildQueue           纯函数（局部数组 push）            → 误报为 Mutable
-deduplicatePlaylist  纯函数（局部 Set.add + push）     → 误报为 Mutable
-topArtists           纯函数（局部 Map.set + sort）     → 误报为 Mutable
-addToPlaylist        Mutable（state.playlist.push）   → 漏检（push 不看 receiver）
-removeFromPlaylist   Mutable（state.playlist.splice） → 漏检
-play/pause/next/...  Mutable（state.xxx = ...）       → 漏检（赋值不在方法名表中）
-```
-
-| | 精确率 | 召回率 |
-|---|---|---|
-| 当前（方法名） | 0% | 0% |
-
-精确率 0%：标记的 5 个全是误报。召回率 0%：9 个真 Mutable 全部漏检（它们通过赋值修改参数属性，不走 push/sort）。
-
-**方法名检测完全失效——既标不准，也查不到。**
+早期版本通过 builtin 方法名（push/sort/set 等）检测 Mutable，在 21 函数的音乐播放器 demo 上实测精确率和召回率都是 0%：
 
 ## Mutable 的正确语义
 
