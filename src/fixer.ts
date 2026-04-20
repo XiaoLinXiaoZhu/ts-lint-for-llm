@@ -60,10 +60,10 @@ export function applyFixes(
     if (fn.returnsNullable) enc.add("Fallible");
 
     // 已解析调用的 callee caps
-    for (const calleeId of fn.resolvedCalls) {
-      const calleeFn = scan.functions.get(calleeId);
+    for (const call of fn.resolvedCalls) {
+      const calleeFn = scan.functions.get(call.target);
       if (!calleeFn) continue;
-      const calleeCaps = result.effectiveCaps.get(calleeId) ?? calleeFn.declaredCaps;
+      const calleeCaps = result.effectiveCaps.get(call.target) ?? calleeFn.declaredCaps;
       for (const c of calleeCaps) enc.add(c);
     }
   }

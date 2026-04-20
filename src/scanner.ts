@@ -14,6 +14,13 @@ import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, type Capability } from "./cap
 
 // ── 类型 ──
 
+export interface CallSite {
+  /** 被调函数 ID（resolvedCalls）或函数名（unresolvedCalls） */
+  target: string;
+  /** 调用位置的行号 */
+  line: number;
+}
+
 export interface FunctionInfo {
   /** 全局唯一 ID: filePath#name 或 filePath#anonymous_line */
   id: string;
@@ -29,8 +36,8 @@ export interface FunctionInfo {
   /** 返回类型是否含 null/undefined */
   returnsNullable: boolean;
   /** 函数体内调用的函数 ID 列表（已解析的）+ 未解析的方法名列表 */
-  resolvedCalls: string[];
-  unresolvedCalls: string[];
+  resolvedCalls: CallSite[];
+  unresolvedCalls: CallSite[];
   /** 加权语句数（用于评分） */
   weightedStatements: number;
   statementCount: number;
@@ -355,14 +362,15 @@ function resolveFileCalls(sf: SourceFile, functions: Map<string, FunctionInfo>, 
 
     // 解析调用目标
     const resolved = resolveCallTarget(node, byName);
+    const callLine = node.getStartLineNumber();
     if (resolved) {
-      if (!owner.resolvedCalls.includes(resolved)) {
-        owner.resolvedCalls.push(resolved);
+      if (!owner.resolvedCalls.some(c => c.target === resolved)) {
+        owner.resolvedCalls.push({ target: resolved, line: callLine });
       }
     } else {
       const callName = getCallName(node);
-      if (callName && !owner.unresolvedCalls.includes(callName)) {
-        owner.unresolvedCalls.push(callName);
+      if (callName && !owner.unresolvedCalls.some(c => c.target === callName)) {
+        owner.unresolvedCalls.push({ target: callName, line: callLine });
       }
     }
   });

@@ -96,12 +96,12 @@ console.log("\n── 4. Scanner: 跨文件调用解析 ──");
 {
   const badPure = findFn("badPure")!;
   assert(badPure.resolvedCalls.length > 0, "badPure 有 resolved calls", `got ${badPure.resolvedCalls.length}`);
-  const callsFetchUser = badPure.resolvedCalls.some(c => c.includes("fetchUser"));
+  const callsFetchUser = badPure.resolvedCalls.some(c => c.target.includes("fetchUser"));
   assert(callsFetchUser, "badPure 解析到了对 fetchUser 的调用");
 
   const processAndLog = findFn("processAndLog")!;
-  const callsAdd = processAndLog.resolvedCalls.some(c => c.includes("add"));
-  const callsLogResult = processAndLog.resolvedCalls.some(c => c.includes("logResult"));
+  const callsAdd = processAndLog.resolvedCalls.some(c => c.target.includes("add"));
+  const callsLogResult = processAndLog.resolvedCalls.some(c => c.target.includes("logResult"));
   assert(callsAdd, "processAndLog 解析到了对 add 的调用");
   assert(callsLogResult, "processAndLog 解析到了对 logResult 的调用");
 }

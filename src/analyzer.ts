@@ -93,30 +93,32 @@ export function analyze(scan: ProjectScan): AnalysisResult {
     const callerCaps = effectiveCaps.get(id)!;
 
     // 已解析的调用
-    for (const calleeId of fn.resolvedCalls) {
+    for (const call of fn.resolvedCalls) {
+      const calleeId = call.target;
       const calleeCaps = effectiveCaps.get(calleeId);
       if (!calleeCaps) continue;
 
       const calleeFn = scan.functions.get(calleeId)!;
-      checkCall(diagnostics, fn, callerCaps, calleeFn.name, calleeCaps);
+      checkCall(diagnostics, fn, callerCaps, call.line, calleeFn.name, calleeCaps);
     }
 
     // 未解析的调用：查内置表
     const reportedUnresolved = new Set<string>();
-    for (const calleeName of fn.unresolvedCalls) {
+    for (const call of fn.unresolvedCalls) {
+      const calleeName = call.target;
       const extEntry = scan.externalCaps.get(calleeName);
       if (extEntry) {
         const calleeCaps = new Set<Capability>(extEntry.caps);
-        checkCall(diagnostics, fn, callerCaps, calleeName, calleeCaps);
+        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, calleeCaps);
       } else if (calleeName in BUILTIN_CAPABILITIES) {
         const calleeCaps = new Set<Capability>(BUILTIN_CAPABILITIES[calleeName] as Capability[]);
-        checkCall(diagnostics, fn, callerCaps, calleeName, calleeCaps);
+        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, calleeCaps);
       } else if (!reportedUnresolved.has(calleeName)) {
         reportedUnresolved.add(calleeName);
         diagnostics.push({
           kind: DiagnosticKind.Unregistered,
           functionId: id, functionName: fn.name,
-          filePath: fn.filePath, line: fn.line,
+          filePath: fn.filePath, line: call.line,
           callee: calleeName,
           message: `'${fn.name}' 调用了未注册函数 '${calleeName}'，无法验证能力。请确认该函数的能力声明，或将其添加到内置声明表。`,
         });
@@ -131,6 +133,7 @@ function checkCall(
   diagnostics: Diagnostic[],
   caller: FunctionInfo,
   callerCaps: Set<Capability>,
+  callLine: number,
   calleeName: string,
   calleeCaps: Set<Capability>,
 ) {
@@ -151,7 +154,7 @@ function checkCall(
     diagnostics.push({
       kind: DiagnosticKind.Escalation,
       functionId: caller.id, functionName: caller.name,
-      filePath: caller.filePath, line: caller.line,
+      filePath: caller.filePath, line: callLine,
       callee: calleeName,
       missingCaps: missing,
       message: `'${caller.name}' 缺少能力 [${missing.join(", ")}]，但调用了需要 [${[...calleeCaps].join(", ")}] 的 '${calleeName}'。`,
@@ -166,7 +169,7 @@ function checkCall(
       diagnostics.push({
         kind: DiagnosticKind.Absorbed,
         functionId: caller.id, functionName: caller.name,
-        filePath: caller.filePath, line: caller.line,
+        filePath: caller.filePath, line: callLine,
         callee: calleeName,
         absorbedCaps: ["Fallible" as Capability],
         message: `'${caller.name}' 调用了 Fallible 函数 '${calleeName}'，但未声明 Fallible。若失败未被 try-catch/默认值处理，请补充 Fallible 声明；否则可将 '${calleeName}' 的空返回改为显式错误结构体（如 { success: false, error: "reason" }）。`,
@@ -177,7 +180,7 @@ function checkCall(
       diagnostics.push({
         kind: DiagnosticKind.Absorbed,
         functionId: caller.id, functionName: caller.name,
-        filePath: caller.filePath, line: caller.line,
+        filePath: caller.filePath, line: callLine,
         callee: calleeName,
         absorbedCaps: ["Async" as Capability],
         message: `'${caller.name}' 调用了 Async 函数 '${calleeName}'，但未声明 Async。若调用方需要 await 本函数结果，请补充 Async 声明；否则确认已通过 task/handle 或 fire-and-forget+错误处理 模式消化了异步操作。`,
