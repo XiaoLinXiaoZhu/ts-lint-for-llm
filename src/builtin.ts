@@ -14,7 +14,8 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   match: [], matchAll: [], search: [],
   padStart: [], padEnd: [], repeat: [],
   charAt: [], charCodeAt: [], codePointAt: [],
-  toLowerCase: [], toUpperCase: [], normalize: [], at: [], concat: [],
+  toLowerCase: [], toUpperCase: [], toLocaleLowerCase: [], toLocaleUpperCase: [],
+  normalize: [], at: [], concat: [], substr: [],
 
   // ── RegExp ──
   test: [], exec: [],
@@ -104,12 +105,17 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   unlink: ["IO", "Async", "Fallible"], stat: ["IO", "Async", "Fallible"],
   readdir: ["IO", "Async", "Fallible"], rename: ["IO", "Async", "Fallible"],
   copyFile: ["IO", "Async", "Fallible"], access: ["IO", "Async", "Fallible"],
+  realpath: ["IO", "Async", "Fallible"],
 
   // ── Node.js path ──
   dirname: [], basename: [], extname: [], resolve: [], relative: [],
 
   // ── Node.js process ──
-  exit: ["IO"], cwd: ["Impure"],
+  exit: ["IO"], cwd: ["Impure"], argv: ["Impure"],
+
+  // ── Hono / HTTP ──
+  param: [], header: [], body: [], status: [],
+  use: [], cors: [],
 
   // ── Bun ──
   file: ["IO"], write: ["IO", "Async", "Fallible"], serve: ["IO"],

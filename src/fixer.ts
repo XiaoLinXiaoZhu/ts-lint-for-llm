@@ -18,15 +18,25 @@ interface FileEdit {
   functionEdits: Map<string, { needed: Set<Capability>; encountered: Set<Capability> }>;
 }
 
+export interface FixChange {
+  filePath: string;
+  functionName: string;
+  line: number;
+  added: Capability[];
+  removed: Capability[];
+}
+
 export interface FixResult {
   filesModified: number;
   capsAdded: number;
   capsRemoved: number;
+  changes: FixChange[];
 }
 
 export function applyFixes(
   scan: ProjectScan,
   result: AnalysisResult,
+  dryRun?: boolean,
 ): FixResult {
   // 收集每个函数需要的能力（声明 + mismatch + escalation 传播的）
   const needed = new Map<string, Set<Capability>>();
@@ -60,10 +70,10 @@ export function applyFixes(
     if (fn.returnsNullable) enc.add("Fallible");
 
     // 已解析调用的 callee caps
-    for (const calleeId of fn.resolvedCalls) {
-      const calleeFn = scan.functions.get(calleeId);
+    for (const call of fn.resolvedCalls) {
+      const calleeFn = scan.functions.get(call.target);
       if (!calleeFn) continue;
-      const calleeCaps = result.effectiveCaps.get(calleeId) ?? calleeFn.declaredCaps;
+      const calleeCaps = result.effectiveCaps.get(call.target) ?? calleeFn.declaredCaps;
       for (const c of calleeCaps) enc.add(c);
     }
   }
@@ -105,6 +115,7 @@ export function applyFixes(
   let filesModified = 0;
   let capsAdded = 0;
   let capsRemoved = 0;
+  const changes: FixChange[] = [];
 
   for (const [filePath, edits] of fileEdits) {
     let source = readFileSync(filePath, "utf8");
@@ -140,14 +151,15 @@ export function applyFixes(
         const removed = [...fn.declaredCaps].filter(c => !targetCaps.has(c));
         capsAdded += added.length;
         capsRemoved += removed.length;
+        changes.push({ filePath, functionName: fn.name, line: fn.line, added: added as Capability[], removed: removed as Capability[] });
       }
     }
 
-    if (modified) {
+    if (modified && !dryRun) {
       writeFileSync(filePath, source);
       filesModified++;
     }
   }
 
-  return { filesModified, capsAdded, capsRemoved };
+  return { filesModified, capsAdded, capsRemoved, changes };
 }
