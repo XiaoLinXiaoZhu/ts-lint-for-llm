@@ -21,6 +21,8 @@ Usage:
 
 Options:
   --tsconfig <path>  Specify tsconfig.json (default: cwd/tsconfig.json)
+                     Tip: 用排除了测试文件的 tsconfig（如 tsconfig.build.json）
+                     可避免扫描 *.test.ts / *.spec.ts
   --fix              Auto-fix @capability declarations
   --dry-run          Preview --fix changes (requires --fix)
   --summary          Only output scores (no diagnostics/functions)
