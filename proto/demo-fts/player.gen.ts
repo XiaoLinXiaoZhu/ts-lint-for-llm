@@ -3,52 +3,61 @@
 
 // 外部依赖（本项目无外部依赖）
 
-// ── display-line ──
+// ── display-line-with-active-flag ──
 
-export type DisplayLine = {
+export type DisplayLineWithActiveFlag = {
   readonly index: number;
   readonly text: string;
   readonly active: boolean;
 }
 
-// ── lyric-line ──
+// ── immutable-player-state ──
 
-export type LyricLine = {
-  readonly time: number;
-  readonly text: string;
-}
-
-// ── player-state ──
-
-export type PlayerState = {
-  readonly lyrics: readonly LyricLine[];
+export type ImmutablePlayerState = {
+  readonly lyrics: readonly LyricLineWithTimestamp[];
   readonly currentTime: number;
   readonly playing: boolean;
   readonly activeLine: number;
 }
 
-// ── build-display ──
+// ── lyric-line-with-timestamp ──
 
-export const buildDisplay = (state: Readonly<PlayerState>, windowSize: number): DisplayLine[] => {
+export type LyricLineWithTimestamp = {
+  readonly time: number;
+  readonly text: string;
+}
+
+// ── advance-player-by-delta-seconds ──
+
+export const advancePlayerByDeltaSeconds = (state: Readonly<ImmutablePlayerState>, deltaSeconds: number): ImmutablePlayerState => {
+  if (!state.playing) return state;
+  const currentTime = state.currentTime + deltaSeconds;
+  const activeLine = findActiveLyricIndexAtTime(state.lyrics, currentTime);
+  return { ...state, currentTime, activeLine };
+}
+
+// ── build-visible-lyric-window ──
+
+export const buildVisibleLyricWindow = (state: Readonly<ImmutablePlayerState>, windowSize: number): DisplayLineWithActiveFlag[] => {
   const { lyrics, activeLine } = state;
   const half = Math.floor(windowSize / 2);
   const start = Math.max(0, activeLine - half);
   const end = Math.min(lyrics.length, start + windowSize);
-  const display: DisplayLine[] = [];
+  const display: DisplayLineWithActiveFlag[] = [];
   for (let i = start; i < end; i++) {
     display.push({ index: i, text: lyrics[i].text, active: i === activeLine });
   }
   return display;
 }
 
-// ── create-player ──
+// ── create-initial-player-state ──
 
-export const createPlayer = (lyrics: readonly LyricLine[]): PlayerState =>
+export const createInitialPlayerState = (lyrics: readonly LyricLineWithTimestamp[]): ImmutablePlayerState =>
   ({ lyrics, currentTime: 0, playing: false, activeLine: -1 })
 
-// ── find-active-line ──
+// ── find-active-lyric-index-at-time ──
 
-export const findActiveLine = (lyrics: readonly LyricLine[], time: number): number => {
+export const findActiveLyricIndexAtTime = (lyrics: readonly LyricLineWithTimestamp[], time: number): number => {
   let idx = -1;
   for (let i = 0; i < lyrics.length; i++) {
     if (lyrics[i].time <= time) idx = i;
@@ -57,19 +66,28 @@ export const findActiveLine = (lyrics: readonly LyricLine[], time: number): numb
   return idx;
 }
 
-// ── format-time ──
+// ── find-lyric-index-by-text-query ──
 
-export const formatTime = (seconds: number): string => {
+export const findLyricIndexByTextQuery = (lyrics: readonly LyricLineWithTimestamp[], query: string): number => {
+  for (let i = 0; i < lyrics.length; i++) {
+    if (lyrics[i].text.includes(query)) return i;
+  }
+  return -1;
+}
+
+// ── format-seconds-to-mm-ss ──
+
+export const formatSecondsToMmSs = (seconds: number): string => {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// ── parse-lrc ──
+// ── parse-lrc-text-to-lyric-lines ──
 
 /** @capability Fallible */
-export const parseLrc = (raw: string): LyricLine[] => {
-  const lines: LyricLine[] = [];
+export const parseLrcTextToLyricLines = (raw: string): LyricLineWithTimestamp[] => {
+  const lines: LyricLineWithTimestamp[] = [];
   for (const line of raw.split("\n")) {
     const m = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)$/);
     if (!m) continue;
@@ -79,51 +97,33 @@ export const parseLrc = (raw: string): LyricLine[] => {
   return lines.sort((a, b) => a.time - b.time);
 }
 
-// ── render ──
+// ── render-player-to-string ──
 
-export const render = (state: Readonly<PlayerState>, windowSize: number): string => {
-  const lines = buildDisplay(state, windowSize);
-  const header = `♪ ${formatTime(state.currentTime)} ${state.playing ? "▶" : "⏸"}`;
+export const renderPlayerToString = (state: Readonly<ImmutablePlayerState>, windowSize: number): string => {
+  const lines = buildVisibleLyricWindow(state, windowSize);
+  const header = `♪ ${formatSecondsToMmSs(state.currentTime)} ${state.playing ? "▶" : "⏸"}`;
   const body = lines
     .map(l => l.active ? `  ▸ ${l.text}` : `    ${l.text}`)
     .join("\n");
   return `${header}\n${body}`;
 }
 
-// ── search-lyric ──
+// ── seek-player-to-matching-lyric ──
 
-export const searchLyric = (lyrics: readonly LyricLine[], query: string): number => {
-  for (let i = 0; i < lyrics.length; i++) {
-    if (lyrics[i].text.includes(query)) return i;
-  }
-  return -1;
+export const seekPlayerToMatchingLyric = (state: Readonly<ImmutablePlayerState>, query: string): ImmutablePlayerState => {
+  const idx = findLyricIndexByTextQuery(state.lyrics, query);
+  if (idx === -1) return state;
+  return seekPlayerToTime(state, state.lyrics[idx].time);
 }
 
-// ── seek ──
+// ── seek-player-to-time ──
 
-export const seek = (state: Readonly<PlayerState>, time: number): PlayerState => {
-  const activeLine = findActiveLine(state.lyrics, time);
+export const seekPlayerToTime = (state: Readonly<ImmutablePlayerState>, time: number): ImmutablePlayerState => {
+  const activeLine = findActiveLyricIndexAtTime(state.lyrics, time);
   return { ...state, currentTime: time, activeLine };
 }
 
-// ── seek-by-text ──
+// ── toggle-player-playing-state ──
 
-export const seekByText = (state: Readonly<PlayerState>, query: string): PlayerState => {
-  const idx = searchLyric(state.lyrics, query);
-  if (idx === -1) return state;
-  return seek(state, state.lyrics[idx].time);
-}
-
-// ── tick ──
-
-export const tick = (state: Readonly<PlayerState>, deltaSeconds: number): PlayerState => {
-  if (!state.playing) return state;
-  const currentTime = state.currentTime + deltaSeconds;
-  const activeLine = findActiveLine(state.lyrics, currentTime);
-  return { ...state, currentTime, activeLine };
-}
-
-// ── toggle-play ──
-
-export const togglePlay = (state: Readonly<PlayerState>): PlayerState =>
+export const togglePlayerPlayingState = (state: Readonly<ImmutablePlayerState>): ImmutablePlayerState =>
   ({ ...state, playing: !state.playing })

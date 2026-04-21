@@ -1,5 +1,5 @@
 {
-  readonly lyrics: readonly LyricLine[];
+  readonly lyrics: readonly LyricLineWithTimestamp[];
   readonly currentTime: number;
   readonly playing: boolean;
   readonly activeLine: number;

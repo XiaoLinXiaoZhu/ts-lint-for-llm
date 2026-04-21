@@ -1,6 +1,6 @@
 // Fallible
-(raw: string): LyricLine[] => {
-  const lines: LyricLine[] = [];
+(raw: string): LyricLineWithTimestamp[] => {
+  const lines: LyricLineWithTimestamp[] = [];
   for (const line of raw.split("\n")) {
     const m = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)$/);
     if (!m) continue;

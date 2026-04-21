@@ -1,0 +1,5 @@
+(state: Readonly<ImmutablePlayerState>, query: string): ImmutablePlayerState => {
+  const idx = findLyricIndexByTextQuery(state.lyrics, query);
+  if (idx === -1) return state;
+  return seekPlayerToTime(state, state.lyrics[idx].time);
+}

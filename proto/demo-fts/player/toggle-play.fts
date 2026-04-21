@@ -1,2 +1,0 @@
-(state: Readonly<PlayerState>): PlayerState =>
-  ({ ...state, playing: !state.playing })

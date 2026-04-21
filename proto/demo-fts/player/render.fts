@@ -1,8 +1,0 @@
-(state: Readonly<PlayerState>, windowSize: number): string => {
-  const lines = buildDisplay(state, windowSize);
-  const header = `♪ ${formatTime(state.currentTime)} ${state.playing ? "▶" : "⏸"}`;
-  const body = lines
-    .map(l => l.active ? `  ▸ ${l.text}` : `    ${l.text}`)
-    .join("\n");
-  return `${header}\n${body}`;
-}

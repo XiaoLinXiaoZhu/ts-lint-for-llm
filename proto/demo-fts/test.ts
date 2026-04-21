@@ -1,4 +1,12 @@
-import { parseLrc, createPlayer, tick, seek, seekByText, togglePlay, render } from "./player.gen";
+import {
+  parseLrcTextToLyricLines,
+  createInitialPlayerState,
+  advancePlayerByDeltaSeconds,
+  seekPlayerToTime,
+  seekPlayerToMatchingLyric,
+  togglePlayerPlayingState,
+  renderPlayerToString,
+} from "./player.gen";
 
 const lrc = `[00:00.00]月亮代表我的心
 [00:12.50]你问我爱你有多深
@@ -16,31 +24,27 @@ const lrc = `[00:00.00]月亮代表我的心
 [01:17.50]深深的一段情
 [01:22.30]教我思念到如今`;
 
-const lyrics = parseLrc(lrc);
-let state = createPlayer(lyrics);
-state = togglePlay(state);
+const lyrics = parseLrcTextToLyricLines(lrc);
+let state = createInitialPlayerState(lyrics);
+state = togglePlayerPlayingState(state);
 
 console.log("=== 初始 ===");
-console.log(render(state, 5));
+console.log(renderPlayerToString(state, 5));
 
-// 模拟播放到 18 秒
-for (let i = 0; i < 18; i++) state = tick(state, 1);
+for (let i = 0; i < 18; i++) state = advancePlayerByDeltaSeconds(state, 1);
 console.log("\n=== 18秒 ===");
-console.log(render(state, 5));
+console.log(renderPlayerToString(state, 5));
 
-// 跳转到 50 秒
-state = seek(state, 50);
+state = seekPlayerToTime(state, 50);
 console.log("\n=== seek 50s ===");
-console.log(render(state, 5));
+console.log(renderPlayerToString(state, 5));
 
-// 继续播放 20 秒
-for (let i = 0; i < 20; i++) state = tick(state, 1);
+for (let i = 0; i < 20; i++) state = advancePlayerByDeltaSeconds(state, 1);
 console.log("\n=== 70秒 ===");
-console.log(render(state, 5));
+console.log(renderPlayerToString(state, 5));
 
-// 测试歌词反查跳转
-state = seekByText(state, "打动我的心");
+state = seekPlayerToMatchingLyric(state, "打动我的心");
 console.log("\n=== seekByText '打动我的心' ===");
-console.log(render(state, 5));
+console.log(renderPlayerToString(state, 5));
 
-console.log("\n✓ fts 版本运行正常");
+console.log("\n✓ fts 版本（长文件名）运行正常");

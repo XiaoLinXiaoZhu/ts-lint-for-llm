@@ -1,4 +1,4 @@
-(lyrics: readonly LyricLine[], time: number): number => {
+(lyrics: readonly LyricLineWithTimestamp[], time: number): number => {
   let idx = -1;
   for (let i = 0; i < lyrics.length; i++) {
     if (lyrics[i].time <= time) idx = i;

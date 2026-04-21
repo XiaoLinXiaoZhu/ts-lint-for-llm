@@ -1,0 +1,6 @@
+(state: Readonly<ImmutablePlayerState>, deltaSeconds: number): ImmutablePlayerState => {
+  if (!state.playing) return state;
+  const currentTime = state.currentTime + deltaSeconds;
+  const activeLine = findActiveLyricIndexAtTime(state.lyrics, currentTime);
+  return { ...state, currentTime, activeLine };
+}
