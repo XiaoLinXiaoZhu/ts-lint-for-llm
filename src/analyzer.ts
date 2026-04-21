@@ -61,7 +61,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
   // 为每个函数计算 effective caps（声明 + 自身特征）
   for (const [id, fn] of scan.functions) {
     const caps = new Set(fn.declaredCaps);
-    if (fn.returnsAsync && fn.isDeclared && !caps.has("Async")) {
+    if (fn.returnsAsync && fn.isDeclared && !caps.has("Async") && !fn.digestedCaps.has("Async")) {
       caps.add("Async");
       diagnostics.push({
         kind: DiagnosticKind.AsyncMismatch,
@@ -70,7 +70,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         message: `'${fn.name}' 返回类型包含 Promise/AsyncIterable，已自动标记为 Async。如不需要此标记，请将异步操作在函数内部消化（如 task/handle 模式），使返回类型不含 Promise。`,
       });
     }
-    if (fn.returnsNullable && fn.isDeclared && !caps.has("Fallible")) {
+    if (fn.returnsNullable && fn.isDeclared && !caps.has("Fallible") && !fn.digestedCaps.has("Fallible")) {
       caps.add("Fallible");
       diagnostics.push({
         kind: DiagnosticKind.FallibleMismatch,
@@ -87,7 +87,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         message: `'${fn.name}' 未声明能力，被视为全能力函数。请添加能力后缀（如 fetchUser_IO_Async）或 @capability 标注（纯函数用空 @capability）。`,
       });
     }
-    if (fn.isDeclared && !caps.has("Mutable") && fn.mutableParams.length > 0) {
+    if (fn.isDeclared && !caps.has("Mutable") && !fn.digestedCaps.has("Mutable") && fn.mutableParams.length > 0) {
       caps.add("Mutable");
       diagnostics.push({
         kind: DiagnosticKind.MutableParam,

@@ -10,7 +10,7 @@
 import { Project, SyntaxKind, Node, type SourceFile, type FunctionDeclaration, type ArrowFunction, type FunctionExpression, type VariableDeclaration, type CallExpression, type ParameterDeclaration } from "ts-morph";
 import { resolve } from "node:path";
 import { loadCapFiles, type ExternalCapEntry } from "./cap-file.js";
-import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, type Capability } from "./capabilities.js";
+import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, WRAPPABLE_CAPABILITIES, type Capability } from "./capabilities.js";
 
 // ── 类型 ──
 
@@ -29,6 +29,8 @@ export interface FunctionInfo {
   line: number;
   /** 声明的能力 */
   declaredCaps: Set<Capability>;
+  /** 已消化的能力（@capability 中用 !Cap 标记） */
+  digestedCaps: Set<Capability>;
   /** 是否有显式声明（@capability 或后缀命名） */
   isDeclared: boolean;
   /** 返回类型是否含 Promise/AsyncIterable */
@@ -67,23 +69,29 @@ function extractCapsFromSuffix(name: string): Set<Capability> | null {
   return found ? caps : null;
 }
 
-function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; found: boolean } {
+function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; digested: Set<Capability>; found: boolean } {
   const jsDocs = getLeadingJSDoc(node);
+  const digested = new Set<Capability>();
   for (const text of jsDocs) {
     const match = text.match(/@capability(?:\s+(.+))?/);
     if (match) {
       const caps = new Set<Capability>();
       if (match[1]) {
         for (const word of match[1].trim().replace(/\*\/.*$/, "").trim().split(/[\s,]+/)) {
-          if (VALID_CAPABILITY_NAMES.has(word as Capability)) {
+          if (word.startsWith("!")) {
+            const digestedWord = word.slice(1);
+            if (VALID_CAPABILITY_NAMES.has(digestedWord as Capability) && WRAPPABLE_CAPABILITIES.has(digestedWord as Capability)) {
+              digested.add(digestedWord as Capability);
+            }
+          } else if (VALID_CAPABILITY_NAMES.has(word as Capability)) {
             caps.add(word as Capability);
           }
         }
       }
-      return { caps, found: true };
+      return { caps, digested, found: true };
     }
   }
-  return { caps: new Set(), found: false };
+  return { caps: new Set(), digested: new Set(), found: false };
 }
 
 function getLeadingJSDoc(node: Node): string[] {
@@ -103,12 +111,12 @@ function getLeadingJSDoc(node: Node): string[] {
   return results;
 }
 
-function resolveCaps(name: string, node: Node): { caps: Set<Capability>; isDeclared: boolean } {
+function resolveCaps(name: string, node: Node): { caps: Set<Capability>; digestedCaps: Set<Capability>; isDeclared: boolean } {
   const fromSuffix = extractCapsFromSuffix(name);
-  if (fromSuffix) return { caps: fromSuffix, isDeclared: true };
+  if (fromSuffix) return { caps: fromSuffix, digestedCaps: new Set(), isDeclared: true };
   const fromJSDoc = extractCapsFromJSDoc(node);
-  if (fromJSDoc.found) return { caps: fromJSDoc.caps, isDeclared: true };
-  return { caps: new Set(ALL_CAPABILITIES), isDeclared: false };
+  if (fromJSDoc.found) return { caps: fromJSDoc.caps, digestedCaps: fromJSDoc.digested, isDeclared: true };
+  return { caps: new Set(ALL_CAPABILITIES), digestedCaps: new Set(), isDeclared: false };
 }
 
 // ── 返回类型检测 ──
@@ -359,7 +367,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
   for (const fn of sf.getFunctions()) {
     const name = fn.getName();
     if (!name) continue;
-    const { caps, isDeclared } = resolveCaps(name, fn);
+    const { caps, digestedCaps, isDeclared } = resolveCaps(name, fn);
     const body = fn.getBody();
     const { count, weighted } = body ? computeWeightedStatements(body) : { count: 0, weighted: 0 };
 
@@ -368,6 +376,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
       name, filePath,
       line: fn.getStartLineNumber(),
       declaredCaps: caps, isDeclared,
+      digestedCaps,
       returnsAsync: checkReturnsAsync(fn),
       returnsNullable: checkReturnsNullable(fn),
       mutableParams: detectMutableParams(fn.getParameters()),
@@ -383,7 +392,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
     if (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init)) continue;
 
     const name = varDecl.getName();
-    const { caps, isDeclared } = resolveCaps(name, varDecl);
+    const { caps, digestedCaps, isDeclared } = resolveCaps(name, varDecl);
     const body = init.getBody();
     const { count, weighted } = body ? computeWeightedStatements(body) : { count: 0, weighted: 0 };
 
@@ -392,6 +401,7 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
       name, filePath,
       line: varDecl.getStartLineNumber(),
       declaredCaps: caps, isDeclared,
+      digestedCaps,
       returnsAsync: checkReturnsAsync(init),
       returnsNullable: checkReturnsNullable(init),
       mutableParams: detectMutableParams(init.getParameters()),

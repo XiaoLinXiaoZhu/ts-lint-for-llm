@@ -31,3 +31,10 @@ export const ELIMINABILITY: Record<Capability, "wrappable" | "rewritable" | "iso
   Impure: "rewritable",
   IO: "isolate-only",
 };
+
+/** wrappable 能力集合，可用 ! 语法声明已消化 */
+export const WRAPPABLE_CAPABILITIES = new Set<Capability>(
+  (Object.entries(ELIMINABILITY) as [Capability, string][])
+    .filter(([, v]) => v === "wrappable")
+    .map(([k]) => k)
+);

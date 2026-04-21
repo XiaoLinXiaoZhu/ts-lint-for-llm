@@ -139,7 +139,9 @@ export function applyFixes(
       if (capLine === -1) continue;
 
       const sorted = ALL_CAPABILITIES.filter(c => targetCaps.has(c));
-      const capText = sorted.length > 0 ? " " + sorted.join(" ") : "";
+      const digestedParts = ALL_CAPABILITIES.filter(c => fn.digestedCaps.has(c)).map(c => `!${c}`);
+      const allParts = [...sorted, ...digestedParts];
+      const capText = allParts.length > 0 ? " " + allParts.join(" ") : "";
       const oldLine = lines[capLine];
       const newLine = oldLine.replace(/@capability[^*\n]*/, `@capability${capText} `);
 

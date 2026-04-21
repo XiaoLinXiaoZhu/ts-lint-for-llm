@@ -264,6 +264,42 @@ console.log("\n── 14. Mutable: wrappable 行为 ──");
   assert(escDiags.length === 0, "addDefault 调用 Mutable 函数不报 escalation（已自动注入）");
 }
 
+console.log("\n── 15. Digested (!Cap): 消化声明 ──");
+{
+  // !Mutable: 非 readonly 参数但声明已消化 → 不报 MutableParam，不注入 Mutable
+  const readStateDigested = findFn("readStateDigested")!;
+  assert(readStateDigested !== null, "扫描到 readStateDigested");
+  assert(readStateDigested.digestedCaps.has("Mutable"), "readStateDigested 的 digestedCaps 含 Mutable");
+  assert(!readStateDigested.declaredCaps.has("Mutable"), "readStateDigested 的 declaredCaps 不含 Mutable");
+  assert(readStateDigested.mutableParams.length > 0, "readStateDigested 有非 readonly 参数");
+  const mutableDiags = findDiags("readStateDigested", DiagnosticKind.MutableParam);
+  assert(mutableDiags.length === 0, "readStateDigested 不报 MutableParam（已消化）");
+  const effCaps = result.effectiveCaps.get(readStateDigested.id)!;
+  assert(!effCaps.has("Mutable"), "readStateDigested 的 effectiveCaps 不含 Mutable");
+
+  // !Fallible: 返回 null 但声明已消化 → 不报 FallibleMismatch，不注入 Fallible
+  const findItemDigested = findFn("findItemDigested")!;
+  assert(findItemDigested !== null, "扫描到 findItemDigested");
+  assert(findItemDigested.digestedCaps.has("Fallible"), "findItemDigested 的 digestedCaps 含 Fallible");
+  assert(!findItemDigested.declaredCaps.has("Fallible"), "findItemDigested 的 declaredCaps 不含 Fallible");
+  assert(findItemDigested.returnsNullable, "findItemDigested returnsNullable");
+  const fallibleDiags = findDiags("findItemDigested", DiagnosticKind.FallibleMismatch);
+  assert(fallibleDiags.length === 0, "findItemDigested 不报 FallibleMismatch（已消化）");
+  const effCaps2 = result.effectiveCaps.get(findItemDigested.id)!;
+  assert(!effCaps2.has("Fallible"), "findItemDigested 的 effectiveCaps 不含 Fallible");
+
+  // !Async: async 函数但声明已消化 → 不报 AsyncMismatch，不注入 Async
+  const loadDataDigested = findFn("loadDataDigested")!;
+  assert(loadDataDigested !== null, "扫描到 loadDataDigested");
+  assert(loadDataDigested.digestedCaps.has("Async"), "loadDataDigested 的 digestedCaps 含 Async");
+  assert(!loadDataDigested.declaredCaps.has("Async"), "loadDataDigested 的 declaredCaps 不含 Async");
+  assert(loadDataDigested.returnsAsync, "loadDataDigested returnsAsync");
+  const asyncDiags = findDiags("loadDataDigested", DiagnosticKind.AsyncMismatch);
+  assert(asyncDiags.length === 0, "loadDataDigested 不报 AsyncMismatch（已消化）");
+  const effCaps3 = result.effectiveCaps.get(loadDataDigested.id)!;
+  assert(!effCaps3.has("Async"), "loadDataDigested 的 effectiveCaps 不含 Async");
+}
+
 // ══ 汇总 ══
 
 console.log(`\n${"═".repeat(40)}`);

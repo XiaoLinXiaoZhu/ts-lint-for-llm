@@ -46,3 +46,15 @@ declare function externalApiCall(): any;
 export function callsExternalApi(): void {
   externalApiCall();
 }
+
+// 消化声明：返回 null + !Fallible → 不应报 FallibleMismatch，不应注入 Fallible
+/** @capability IO !Fallible */
+export function findItemDigested(id: string): string | null {
+  return null;
+}
+
+// 消化声明：async + !Async → 不应报 AsyncMismatch，不应注入 Async
+/** @capability IO !Async */
+export async function loadDataDigested(): Promise<string> {
+  return "data";
+}

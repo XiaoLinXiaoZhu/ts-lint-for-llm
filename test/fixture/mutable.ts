@@ -54,3 +54,9 @@ export function buildList(n: number): number[] {
 export function addDefault(state: State): void {
   pushItem(state, "default");
 }
+
+// 消化声明：非 readonly 参数 + !Mutable → 不应报 MutableParam，不应注入 Mutable
+/** @capability !Mutable */
+export function readStateDigested(state: State): number {
+  return state.count;
+}
