@@ -3,6 +3,9 @@ import {
   findFn, findDiags, getResult, getEffectiveCaps, getPropagatedCaps,
   hasMissingCap, DiagnosticKind,
 } from "./helpers.js";
+import { analyze, type AnalysisResult } from "../src/analyzer.js";
+import type { ProjectScan, FunctionInfo } from "../src/scanner.js";
+import type { Capability } from "../src/capabilities.js";
 
 describe("analyzer: effectiveCaps", () => {
   test("声明的能力 + 自动检测 = effectiveCaps", () => {
@@ -165,6 +168,46 @@ describe("analyzer: unregistered 诊断", () => {
     const diags = findDiags("logResult", DiagnosticKind.Unregistered)
       .filter(d => d.callee === "log");
     expect(diags).toHaveLength(0);
+  });
+
+  test("调用 Object 原型同名函数不会崩溃，按 unregistered 处理", () => {
+    // constructor / valueOf 是 Object.prototype 属性，
+    // 内置能力表查找不应匹配原型链上的属性
+    const mockFn: FunctionInfo = {
+      id: "test.ts:0",
+      name: "caller",
+      filePath: "test.ts",
+      line: 1,
+      declaredCaps: new Set<Capability>(["IO", "Async", "Fallible", "Impure", "Mutable"]),
+      isDeclared: true,
+      returnsAsync: false,
+      returnsNullable: false,
+      mutableParams: [],
+      resolvedCalls: [],
+      unresolvedCalls: [
+        { target: "constructor", line: 2 },
+        { target: "valueOf", line: 3 },
+        { target: "hasOwnProperty", line: 4 },
+      ],
+      weightedStatements: 1,
+      statementCount: 1,
+    };
+    const scan: ProjectScan = {
+      functions: new Map([["test.ts:0", mockFn]]),
+      externalCaps: new Map(),
+    };
+
+    // Should not throw "function is not iterable"
+    const result = analyze(scan);
+
+    // These should be reported as unregistered, not matched from prototype
+    const unreg = result.diagnostics.filter(
+      d => d.kind === DiagnosticKind.Unregistered && d.functionName === "caller",
+    );
+    const unregCallees = new Set(unreg.map(d => d.callee));
+    expect(unregCallees.has("constructor")).toBe(true);
+    expect(unregCallees.has("valueOf")).toBe(true);
+    expect(unregCallees.has("hasOwnProperty")).toBe(true);
   });
 });
 
