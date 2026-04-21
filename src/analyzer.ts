@@ -134,9 +134,9 @@ export function analyze(scan: ProjectScan): AnalysisResult {
 
       // 2. Builtin table (match by qualifiedName first, then bare name)
       let builtinCaps: Capability[] | undefined;
-      if (qualifiedName && qualifiedName in BUILTIN_CAPABILITIES) {
+      if (qualifiedName && Object.hasOwn(BUILTIN_CAPABILITIES, qualifiedName)) {
         builtinCaps = BUILTIN_CAPABILITIES[qualifiedName];
-      } else if (calleeName in BUILTIN_CAPABILITIES) {
+      } else if (Object.hasOwn(BUILTIN_CAPABILITIES, calleeName)) {
         builtinCaps = BUILTIN_CAPABILITIES[calleeName];
       }
       if (builtinCaps !== undefined) {
