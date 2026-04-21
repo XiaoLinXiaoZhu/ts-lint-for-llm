@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "bun src/cli.ts",
-    "dev": "bun --watch src/cli.ts"
+    "dev": "bun --watch src/cli.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "ts-morph": "^28.0.0"

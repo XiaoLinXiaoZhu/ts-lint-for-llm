@@ -39,8 +39,7 @@ export function applyFixes(
 
   for (const [id, fn] of scan.functions) {
     if (!fn.isDeclared) continue;
-    const effective = result.effectiveCaps.get(id) ?? fn.declaredCaps;
-    targetCapsMap.set(id, new Set(effective));
+    targetCapsMap.set(id, new Set(fn.declaredCaps));
   }
 
   // From missing_capability diagnostics: add non-blockable caps only
@@ -61,7 +60,8 @@ export function applyFixes(
   // Remove excess declarations (caps not encountered in call chain)
   for (const [id, fn] of scan.functions) {
     if (!fn.isDeclared) continue;
-    if (fn.unresolvedCalls.length > 0) continue; // don't remove if unknown calls exist
+    if (fn.unresolvedCalls.length > 0) continue;
+    if (fn.resolvedCalls.length === 0) continue; // no calls → can't validate, don't remove
 
     const target = targetCapsMap.get(id)!;
     const encountered = new Set<Capability>();
