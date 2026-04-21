@@ -126,6 +126,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         checkCall(diagnostics, fn, callerCaps, call.line, calleeName, calleeCaps);
       } else if (!reportedUnresolved.has(calleeName)) {
         reportedUnresolved.add(calleeName);
+        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, new Set(ALL_CAPABILITIES));
         diagnostics.push({
           kind: DiagnosticKind.Unregistered,
           functionId: id, functionName: fn.name,
