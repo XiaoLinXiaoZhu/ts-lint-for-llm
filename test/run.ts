@@ -300,6 +300,70 @@ console.log("\n── 15. Digested (!Cap): 消化声明 ──");
   assert(!effCaps3.has("Async"), "loadDataDigested 的 effectiveCaps 不含 Async");
 }
 
+console.log("\n── 16. 对象方法扫描 ──");
+{
+  // PropertyAssignment + ArrowFunction: api.getUser
+  const getUser = findFn("getUser");
+  assert(getUser !== null, "扫描到 api.getUser 对象方法");
+  if (getUser) {
+    assert(getUser.isDeclared, "getUser 已声明");
+    assert(getUser.declaredCaps.has("IO"), "getUser 声明了 IO");
+  }
+
+  // PropertyAssignment + ArrowFunction: api.buildUrl (pure)
+  const buildUrl = findFn("buildUrl");
+  assert(buildUrl !== null, "扫描到 api.buildUrl 对象方法");
+  if (buildUrl) {
+    assert(buildUrl.isDeclared, "buildUrl 已声明");
+    assert(buildUrl.declaredCaps.size === 0, "buildUrl 是纯函数");
+  }
+
+  // MethodDeclaration in ObjectLiteral: increment
+  const increment = findFn("increment");
+  assert(increment !== null, "扫描到 createCounter 返回的 increment 方法");
+  if (increment) {
+    assert(increment.isDeclared, "increment 已声明");
+    assert(increment.declaredCaps.has("Mutable"), "increment 声明了 Mutable");
+  }
+
+  // MethodDeclaration in ObjectLiteral: getValue (pure)
+  const getValue = findFn("getValue");
+  assert(getValue !== null, "扫描到 createCounter 返回的 getValue 方法");
+  if (getValue) {
+    assert(getValue.declaredCaps.size === 0, "getValue 是纯函数");
+  }
+
+  // 同文件同名方法：reset 出现两次
+  const resets = [...scan.functions.values()].filter(f => f.name === "reset");
+  assert(resets.length === 2, "扫描到两个 reset 方法", `got ${resets.length}`);
+  if (resets.length === 2) {
+    const ids = new Set(resets.map(f => f.id));
+    assert(ids.size === 2, "两个 reset 有不同的 id（行号区分）");
+    const caps = resets.map(f => [...f.declaredCaps].sort().join(",")).sort();
+    assert(caps.includes("IO"), "一个 reset 有 IO");
+    assert(caps.includes(""), "一个 reset 是纯函数");
+  }
+}
+
+console.log("\n── 17. class 方法扫描 ──");
+{
+  const greet = findFn("greet");
+  assert(greet !== null, "扫描到 Greeter.greet");
+  if (greet) {
+    assert(greet.isDeclared, "greet 已声明");
+    assert(greet.declaredCaps.size === 0, "greet 是纯函数");
+    assert(greet.id.includes("Greeter.greet"), "greet 的 id 含 Greeter.greet");
+  }
+
+  const greetAndLog = findFn("greetAndLog");
+  assert(greetAndLog !== null, "扫描到 Greeter.greetAndLog");
+  if (greetAndLog) {
+    assert(greetAndLog.isDeclared, "greetAndLog 已声明");
+    assert(greetAndLog.declaredCaps.has("IO"), "greetAndLog 声明了 IO");
+    assert(greetAndLog.id.includes("Greeter.greetAndLog"), "greetAndLog 的 id 含 Greeter.greetAndLog");
+  }
+}
+
 // ══ 汇总 ══
 
 console.log(`\n${"═".repeat(40)}`);
