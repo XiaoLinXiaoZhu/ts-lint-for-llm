@@ -1,60 +1,50 @@
 /**
  * 项目扫描器
  *
- * 使用 ts-morph 加载整个 TypeScript 项目，提取每个函数的：
- * - @capability 声明（JSDoc / 后缀命名）
- * - 返回类型特征（async / nullable）
- * - 函数体内的所有调用（含跨文件解析）
+ * 函数 ID = filePath:pos（声明节点的 getStart()）
+ * 调用解析走 symbol → declaration → pos
  */
 
-import { Project, SyntaxKind, Node, type SourceFile, type FunctionDeclaration, type ArrowFunction, type FunctionExpression, type MethodDeclaration, type ClassDeclaration, type VariableDeclaration, type CallExpression, type ParameterDeclaration } from "ts-morph";
+import {
+  Project, SyntaxKind, Node,
+  type SourceFile, type FunctionDeclaration, type ArrowFunction,
+  type FunctionExpression, type MethodDeclaration,
+  type CallExpression, type ParameterDeclaration,
+} from "ts-morph";
 import { resolve } from "node:path";
 import { loadCapFiles, type ExternalCapEntry } from "./cap-file.js";
-import { VALID_CAPABILITY_NAMES, ALL_CAPABILITIES, WRAPPABLE_CAPABILITIES, type Capability } from "./capabilities.js";
+import { VALID_CAPABILITY_NAMES, PROPAGATE_CAPS, type Capability } from "./capabilities.js";
 
-// ── 类型 ──
+// ── Types ──
 
 export interface CallSite {
-  /** 被调函数 ID（resolvedCalls）或函数名（unresolvedCalls） */
   target: string;
-  /** 调用位置的行号 */
+  qualifiedName?: string;
   line: number;
 }
 
 export interface FunctionInfo {
-  /** 全局唯一 ID: filePath#name 或 filePath#anonymous_line */
   id: string;
   name: string;
   filePath: string;
   line: number;
-  /** 声明的能力 */
   declaredCaps: Set<Capability>;
-  /** 已消化的能力（@capability 中用 !Cap 标记） */
-  digestedCaps: Set<Capability>;
-  /** 是否有显式声明（@capability 或后缀命名） */
   isDeclared: boolean;
-  /** 返回类型是否含 Promise/AsyncIterable */
   returnsAsync: boolean;
-  /** 返回类型是否含 null/undefined */
   returnsNullable: boolean;
-  /** 非 readonly 的引用类型参数名列表（可能修改调用方状态） */
   mutableParams: string[];
-  /** 函数体内调用的函数 ID 列表（已解析的）+ 未解析的方法名列表 */
   resolvedCalls: CallSite[];
   unresolvedCalls: CallSite[];
-  /** 加权语句数（用于评分） */
   weightedStatements: number;
   statementCount: number;
 }
 
 export interface ProjectScan {
   functions: Map<string, FunctionInfo>;
-  /** 按函数名索引（可能一对多） */
-  byName: Map<string, FunctionInfo[]>;
   externalCaps: Map<string, ExternalCapEntry>;
 }
 
-// ── 能力解析 ──
+// ── Capability parsing ──
 
 function extractCapsFromSuffix(name: string): Set<Capability> | null {
   const parts = name.split("_");
@@ -69,29 +59,23 @@ function extractCapsFromSuffix(name: string): Set<Capability> | null {
   return found ? caps : null;
 }
 
-function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; digested: Set<Capability>; found: boolean } {
+function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; found: boolean } {
   const jsDocs = getLeadingJSDoc(node);
-  const digested = new Set<Capability>();
   for (const text of jsDocs) {
     const match = text.match(/@capability(?:\s+(.+))?/);
     if (match) {
       const caps = new Set<Capability>();
       if (match[1]) {
         for (const word of match[1].trim().replace(/\*\/.*$/, "").trim().split(/[\s,]+/)) {
-          if (word.startsWith("!")) {
-            const digestedWord = word.slice(1);
-            if (VALID_CAPABILITY_NAMES.has(digestedWord as Capability) && WRAPPABLE_CAPABILITIES.has(digestedWord as Capability)) {
-              digested.add(digestedWord as Capability);
-            }
-          } else if (VALID_CAPABILITY_NAMES.has(word as Capability)) {
+          if (VALID_CAPABILITY_NAMES.has(word as Capability)) {
             caps.add(word as Capability);
           }
         }
       }
-      return { caps, digested, found: true };
+      return { caps, found: true };
     }
   }
-  return { caps: new Set(), digested: new Set(), found: false };
+  return { caps: new Set(), found: false };
 }
 
 function getLeadingJSDoc(node: Node): string[] {
@@ -99,7 +83,6 @@ function getLeadingJSDoc(node: Node): string[] {
   for (const range of node.getLeadingCommentRanges()) {
     results.push(range.getText());
   }
-  // 对于 variable declaration 里的箭头函数，也检查 variable statement 的注释
   if (Node.isVariableDeclaration(node)) {
     const stmt = node.getVariableStatement();
     if (stmt) {
@@ -111,26 +94,26 @@ function getLeadingJSDoc(node: Node): string[] {
   return results;
 }
 
-function resolveCaps(name: string, node: Node): { caps: Set<Capability>; digestedCaps: Set<Capability>; isDeclared: boolean } {
+function resolveCaps(name: string, node: Node): { caps: Set<Capability>; isDeclared: boolean } {
   const fromSuffix = extractCapsFromSuffix(name);
-  if (fromSuffix) return { caps: fromSuffix, digestedCaps: new Set(), isDeclared: true };
+  if (fromSuffix) return { caps: fromSuffix, isDeclared: true };
   const fromJSDoc = extractCapsFromJSDoc(node);
-  if (fromJSDoc.found) return { caps: fromJSDoc.caps, digestedCaps: fromJSDoc.digested, isDeclared: true };
-  return { caps: new Set(ALL_CAPABILITIES), digestedCaps: new Set(), isDeclared: false };
+  if (fromJSDoc.found) return { caps: fromJSDoc.caps, isDeclared: true };
+  return { caps: new Set<Capability>(PROPAGATE_CAPS), isDeclared: false };
 }
 
-// ── 返回类型检测 ──
+// ── Return type detection ──
 
-function checkReturnsAsync(node: FunctionDeclaration | ArrowFunction | FunctionExpression | MethodDeclaration): boolean {
+type FnNode = FunctionDeclaration | ArrowFunction | FunctionExpression | MethodDeclaration;
+
+function checkReturnsAsync(node: FnNode): boolean {
   if (node.isAsync()) return true;
-  const retType = node.getReturnType();
-  const text = retType.getText();
+  const text = node.getReturnType().getText();
   return /^(Promise|AsyncIterable|AsyncGenerator|AsyncIterableIterator)</.test(text);
 }
 
-function checkReturnsNullable(node: FunctionDeclaration | ArrowFunction | FunctionExpression | MethodDeclaration): boolean {
-  const retType = node.getReturnType();
-  return typeIsNullable(retType);
+function checkReturnsNullable(node: FnNode): boolean {
+  return typeIsNullable(node.getReturnType());
 }
 
 function typeIsNullable(type: import("ts-morph").Type): boolean {
@@ -138,41 +121,30 @@ function typeIsNullable(type: import("ts-morph").Type): boolean {
   if (type.isUnion()) {
     return type.getUnionTypes().some(t => t.isNull() || t.isUndefined());
   }
-  // Promise<T | null> — check type arguments
   for (const arg of type.getTypeArguments()) {
     if (typeIsNullable(arg)) return true;
   }
   return false;
 }
 
-// ── 参数可变性检测 ──
+// ── Mutable param detection ──
 
 function detectMutableParams(params: ParameterDeclaration[]): string[] {
   const result: string[] = [];
   for (const param of params) {
-    if (isNonReadonlyRefParam(param)) {
-      result.push(param.getName());
-    }
+    if (isNonReadonlyRefParam(param)) result.push(param.getName());
   }
   return result;
 }
 
 function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
   const type = param.getType();
-
-  if (type.isString() || type.isNumber() || type.isBoolean() ||
-      type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
-      type.isUndefined() || type.isNull() || type.isVoid() ||
-      type.isEnum() || type.isEnumLiteral()) {
-    return false;
-  }
+  if (isPrimitive(type)) return false;
 
   if (type.isUnion()) {
     return type.getUnionTypes().some(t => {
       if (!isRefType(t)) return false;
-      // union 成员是 Readonly<> 包装的引用类型 → 不算可变
-      const text = t.getText();
-      return !text.startsWith("Readonly<");
+      return !t.getText().startsWith("Readonly<");
     });
   }
 
@@ -183,33 +155,28 @@ function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
   const typeNode = param.getTypeNode();
   if (typeNode) {
     const text = typeNode.getText();
-    if (/^(readonly\s|Readonly<|ReadonlyArray<|ReadonlyMap<|ReadonlySet<)/.test(text)) {
-      return false;
-    }
-    // 消费型接口（只读迭代器/流）不算可变参数
+    if (/^(readonly\s|Readonly<|ReadonlyArray<|ReadonlyMap<|ReadonlySet<)/.test(text)) return false;
     if (/^(Async)?(Iterable|Iterator|IterableIterator|Generator)</.test(text) ||
-        /^ReadableStream/.test(text)) {
-      return false;
-    }
+        /^ReadableStream/.test(text)) return false;
   }
 
   return isRefType(type);
 }
 
+function isPrimitive(type: import("ts-morph").Type): boolean {
+  return type.isString() || type.isNumber() || type.isBoolean() ||
+    type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
+    type.isUndefined() || type.isNull() || type.isVoid() ||
+    type.isEnum() || type.isEnumLiteral();
+}
+
 function isRefType(type: import("ts-morph").Type): boolean {
-  if (type.isString() || type.isNumber() || type.isBoolean() ||
-      type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
-      type.isUndefined() || type.isNull() || type.isVoid() ||
-      type.isEnum() || type.isEnumLiteral()) {
-    return false;
-  }
-  if (type.isUnion()) {
-    return type.getUnionTypes().some(t => isRefType(t));
-  }
+  if (isPrimitive(type)) return false;
+  if (type.isUnion()) return type.getUnionTypes().some(t => isRefType(t));
   return type.isObject() || type.isArray() || type.isInterface() || type.isIntersection();
 }
 
-// ── 语句权重计算 ──
+// ── Weighted statements ──
 
 const NESTING_KINDS = new Set([
   SyntaxKind.IfStatement, SyntaxKind.ForStatement, SyntaxKind.ForInStatement,
@@ -252,73 +219,63 @@ function computeWeightedStatements(body: Node): { count: number; weighted: numbe
   return { count, weighted: Math.round(weighted * 10) / 10 };
 }
 
-// ── 调用解析 ──
+// ── Call resolution ──
 
-function resolveCallTarget(call: CallExpression, functionMap: Map<string, FunctionInfo[]>): string | null {
+function makeFnId(filePath: string, pos: number): string {
+  return `${filePath}:${pos}`;
+}
+
+function resolveCallTarget(
+  call: CallExpression,
+  functions: Map<string, FunctionInfo>,
+): { id: string } | { unresolved: true; name: string; qualifiedName?: string } {
   const expr = call.getExpression();
+  const callName = getCallName(call);
 
-  // 尝试通过 ts-morph 的类型系统解析到定义处
   try {
     const symbol = expr.getSymbol();
     if (symbol) {
+      const qualifiedName = symbol.getFullyQualifiedName().replace(/^"[^"]*"\./, "");
       const decls = symbol.getDeclarations();
-      for (const decl of decls) {
-        const sf = decl.getSourceFile();
-        const filePath = sf.getFilePath();
-        let name: string | null = null;
+      if (decls.length > 0) {
+        let decl = decls[0];
 
-        if (Node.isFunctionDeclaration(decl)) {
-          name = decl.getName() ?? null;
-        } else if (Node.isVariableDeclaration(decl)) {
-          name = decl.getName();
-        } else if (Node.isMethodDeclaration(decl) || Node.isMethodSignature(decl)) {
-          name = decl.getName();
-        } else if (Node.isParameterDeclaration(decl)) {
-          name = decl.getName();
-        } else if (Node.isPropertyAssignment(decl) || Node.isPropertySignature(decl)) {
-          name = decl.getName();
-        } else if (Node.isImportSpecifier(decl)) {
-          // 追踪 import { X } from "..." 到源定义
-          const importedName = decl.getName();
+        // ImportSpecifier → trace to source export
+        if (Node.isImportSpecifier(decl)) {
           try {
             const importDecl = decl.getImportDeclaration();
-            const moduleSourceFile = importDecl.getModuleSpecifierSourceFile();
-            if (moduleSourceFile) {
-              const sourceFilePath = moduleSourceFile.getFilePath();
-              const id = `${sourceFilePath}#${importedName}`;
-              if (functionMap.has(importedName)) {
-                const matches = functionMap.get(importedName)!;
-                const exact = matches.find(f => f.filePath === sourceFilePath);
-                if (exact) return exact.id;
+            const moduleSf = importDecl.getModuleSpecifierSourceFile();
+            if (moduleSf) {
+              const exportedSymbol = moduleSf.getExportedDeclarations().get(decl.getName());
+              if (exportedSymbol && exportedSymbol.length > 0) {
+                decl = exportedSymbol[0];
               }
             }
-          } catch {}
-          // fallback: 按名字匹配
-          name = importedName;
+          } catch { /* fall through to pos-based check */ }
         }
 
-        if (name) {
-          if (functionMap.has(name)) {
-            const matches = functionMap.get(name)!;
-            // 精确匹配：文件路径 + 行号
-            const declLine = decl.getStartLineNumber();
-            const exactLine = matches.find(f => f.filePath === filePath && f.line === declLine);
-            if (exactLine) return exactLine.id;
-            // 文件路径匹配，仅当唯一时使用
-            const fileMatches = matches.filter(f => f.filePath === filePath);
-            if (fileMatches.length === 1) return fileMatches[0].id;
-            // 跨文件唯一匹配
-            if (matches.length === 1) return matches[0].id;
-            // 多个候选 → 不解析（避免误匹配）
+        const sf = decl.getSourceFile();
+        const filePath = sf.getFilePath();
+
+        // Skip node_modules / lib declarations
+        if (!filePath.includes("node_modules") && !filePath.match(/\/typescript\/lib\//)) {
+          const pos = decl.getStart();
+          const id = makeFnId(filePath, pos);
+          if (functions.has(id)) return { id };
+
+          // For variable declarations, the function info uses the variable's start
+          // but the exported declaration might be the initializer (arrow fn)
+          if (Node.isVariableDeclaration(decl)) {
+            const varId = makeFnId(filePath, decl.getStart());
+            if (functions.has(varId)) return { id: varId };
           }
         }
       }
+      return { unresolved: true, name: callName ?? qualifiedName, qualifiedName };
     }
-  } catch {
-    // 类型解析失败，回退到名字匹配
-  }
+  } catch { /* fall through */ }
 
-  return null;
+  return { unresolved: true, name: callName ?? "unknown" };
 }
 
 function getCallName(call: CallExpression): string | null {
@@ -328,58 +285,87 @@ function getCallName(call: CallExpression): string | null {
   return null;
 }
 
-// ── 项目扫描 ──
+function findOwnerFunction(
+  node: Node,
+  filePath: string,
+  functions: Map<string, FunctionInfo>,
+): FunctionInfo | null {
+  let current = node.getParent();
+  while (current) {
+    if (Node.isFunctionDeclaration(current) ||
+        Node.isArrowFunction(current) ||
+        Node.isFunctionExpression(current) ||
+        Node.isMethodDeclaration(current)) {
+      const pos = current.getStart();
+      const id = makeFnId(filePath, pos);
+      const fn = functions.get(id);
+      if (fn) return fn;
+
+      // For arrow/function expression inside VariableDeclaration
+      const parent = current.getParent();
+      if (parent && Node.isVariableDeclaration(parent)) {
+        const varId = makeFnId(filePath, parent.getStart());
+        const varFn = functions.get(varId);
+        if (varFn) return varFn;
+      }
+      // For arrow/function expression inside PropertyAssignment
+      if (parent && Node.isPropertyAssignment(parent)) {
+        const propId = makeFnId(filePath, parent.getStart());
+        const propFn = functions.get(propId);
+        if (propFn) return propFn;
+      }
+    }
+    current = current.getParent();
+  }
+  return null;
+}
+
+// ── Project scan ──
 
 export function scanProject(tsConfigPath: string): ProjectScan {
   const project = new Project({ tsConfigFilePath: tsConfigPath });
   const functions = new Map<string, FunctionInfo>();
-  const byName = new Map<string, FunctionInfo[]>();
   const capEntries = loadCapFiles(resolve(tsConfigPath, ".."));
   const externalCaps = new Map<string, ExternalCapEntry>();
   for (const entry of capEntries) {
     externalCaps.set(entry.name, entry);
   }
   if (capEntries.length > 0) {
-    // 不打印到 stdout（stdout 用于 JSON），用 stderr
     console.error(`[capability-lint] Loaded ${capEntries.length} external declarations from .cap.ts files`);
   }
 
-  function register(info: FunctionInfo) {
-    functions.set(info.id, info);
-    const list = byName.get(info.name) || [];
-    list.push(info);
-    byName.set(info.name, list);
-  }
-
-  // 第一遍：收集所有函数声明
+  // Pass 1: collect all function declarations
   for (const sf of project.getSourceFiles()) {
     if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
-    scanFileDeclarations(sf, register);
+    scanFileDeclarations(sf, functions);
   }
 
-  // 第二遍：解析调用目标
+  // Pass 2: resolve calls
   for (const sf of project.getSourceFiles()) {
     if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
-    resolveFileCalls(sf, functions, byName);
+    resolveFileCalls(sf, functions);
   }
 
-  return { functions, byName, externalCaps };
+  return { functions, externalCaps };
 }
 
-function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => void) {
+function scanFileDeclarations(sf: SourceFile, functions: Map<string, FunctionInfo>) {
   const filePath = sf.getFilePath();
 
   function registerFn(
-    name: string, id: string, line: number,
+    name: string,
     capsNode: Node,
-    fnNode: FunctionDeclaration | ArrowFunction | FunctionExpression | MethodDeclaration,
+    fnNode: FnNode,
     bodyNode: Node | undefined,
+    posNode: Node,
   ) {
-    const { caps, digestedCaps, isDeclared } = resolveCaps(name, capsNode);
+    const pos = posNode.getStart();
+    const id = makeFnId(filePath, pos);
+    const { caps, isDeclared } = resolveCaps(name, capsNode);
     const { count, weighted } = bodyNode ? computeWeightedStatements(bodyNode) : { count: 0, weighted: 0 };
-    register({
-      id, name, filePath, line,
-      declaredCaps: caps, isDeclared, digestedCaps,
+    functions.set(id, {
+      id, name, filePath, line: posNode.getStartLineNumber(),
+      declaredCaps: caps, isDeclared,
       returnsAsync: checkReturnsAsync(fnNode),
       returnsNullable: checkReturnsNullable(fnNode),
       mutableParams: detectMutableParams(fnNode.getParameters()),
@@ -388,117 +374,70 @@ function scanFileDeclarations(sf: SourceFile, register: (info: FunctionInfo) => 
     });
   }
 
-  // 顶层 function declarations
+  // Top-level function declarations
   for (const fn of sf.getFunctions()) {
     const name = fn.getName();
     if (!name) continue;
-    registerFn(name, `${filePath}#${name}`, fn.getStartLineNumber(), fn, fn, fn.getBody());
+    registerFn(name, fn, fn, fn.getBody(), fn);
   }
 
-  // variable declarations with arrow/function expression
+  // Variable declarations with arrow/function expression
   for (const varDecl of sf.getVariableDeclarations()) {
     const init = varDecl.getInitializer();
     if (!init) continue;
     if (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init)) continue;
     const name = varDecl.getName();
-    registerFn(name, `${filePath}#${name}`, varDecl.getStartLineNumber(), varDecl, init, init.getBody());
+    registerFn(name, varDecl, init, init.getBody(), varDecl);
   }
 
-  // object literal methods and arrow-function properties (recursive)
+  // Object literal methods and arrow-function properties
   sf.forEachDescendant(node => {
-    // MethodDeclaration inside ObjectLiteralExpression: { chat() { ... } }
     if (Node.isMethodDeclaration(node) && node.getParent() && Node.isObjectLiteralExpression(node.getParent()!)) {
       const name = node.getName();
-      const line = node.getStartLineNumber();
-      registerFn(name, `${filePath}#${name}@${line}`, line, node, node, node.getBody());
+      registerFn(name, node, node, node.getBody(), node);
       return;
     }
-    // PropertyAssignment with arrow/function value: { createSession: () => ... }
     if (Node.isPropertyAssignment(node) && node.getParent() && Node.isObjectLiteralExpression(node.getParent()!)) {
       const init = node.getInitializer();
       if (!init || (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init))) return;
       const name = node.getName();
-      const line = node.getStartLineNumber();
-      registerFn(name, `${filePath}#${name}@${line}`, line, node, init, init.getBody());
+      registerFn(name, node, init, init.getBody(), node);
       return;
     }
   });
 
-  // class methods
+  // Class methods
   for (const cls of sf.getClasses()) {
-    const className = cls.getName() ?? `AnonymousClass@${cls.getStartLineNumber()}`;
     for (const method of cls.getMethods()) {
       const name = method.getName();
-      const qualifiedName = `${className}.${name}`;
-      registerFn(name, `${filePath}#${qualifiedName}`, method.getStartLineNumber(), method, method, method.getBody());
+      registerFn(name, method, method, method.getBody(), method);
     }
   }
 }
 
-function findOwner(
-  ownerFn: Node,
-  filePath: string,
-  functions: Map<string, FunctionInfo>,
-  byName: Map<string, FunctionInfo[]>,
-): FunctionInfo | null {
-  let ownerName: string | null = null;
-  const ownerLine = ownerFn.getStartLineNumber();
-
-  if (Node.isFunctionDeclaration(ownerFn)) {
-    ownerName = ownerFn.getName() ?? null;
-  } else if (Node.isMethodDeclaration(ownerFn)) {
-    ownerName = ownerFn.getName();
-  } else if (ownerFn.getParent() && Node.isVariableDeclaration(ownerFn.getParent()!)) {
-    ownerName = (ownerFn.getParent() as VariableDeclaration).getName();
-  } else if (ownerFn.getParent() && Node.isPropertyAssignment(ownerFn.getParent()!)) {
-    ownerName = (ownerFn.getParent() as any).getName();
-  }
-  if (!ownerName) return null;
-
-  // 先尝试精确 id 匹配（顶层函数）
-  const directId = `${filePath}#${ownerName}`;
-  const direct = functions.get(directId);
-  if (direct) return direct;
-
-  // 通过 byName + filePath + line 匹配（对象方法、class 方法）
-  const candidates = byName.get(ownerName);
-  if (!candidates) return null;
-  const fileMatches = candidates.filter(f => f.filePath === filePath);
-  if (fileMatches.length === 1) return fileMatches[0];
-  // 多个同文件同名 → 用行号精确匹配
-  return fileMatches.find(f => f.line === ownerLine) ?? null;
-}
-
-function resolveFileCalls(sf: SourceFile, functions: Map<string, FunctionInfo>, byName: Map<string, FunctionInfo[]>) {
+function resolveFileCalls(sf: SourceFile, functions: Map<string, FunctionInfo>) {
   const filePath = sf.getFilePath();
 
-  // 遍历所有函数体内的 CallExpression
   sf.forEachDescendant(node => {
     if (!Node.isCallExpression(node)) return;
 
-    // 找到所属函数（支持顶层函数、对象方法、class 方法）
-    const ownerFn = node.getFirstAncestor(ancestor =>
-      Node.isFunctionDeclaration(ancestor) ||
-      Node.isArrowFunction(ancestor) ||
-      Node.isFunctionExpression(ancestor) ||
-      Node.isMethodDeclaration(ancestor)
-    );
-    if (!ownerFn) return;
-
-    const owner = findOwner(ownerFn, filePath, functions, byName);
+    const owner = findOwnerFunction(node, filePath, functions);
     if (!owner) return;
 
-    // 解析调用目标
-    const resolved = resolveCallTarget(node, byName);
+    const result = resolveCallTarget(node, functions);
     const callLine = node.getStartLineNumber();
-    if (resolved) {
-      if (!owner.resolvedCalls.some(c => c.target === resolved)) {
-        owner.resolvedCalls.push({ target: resolved, line: callLine });
+
+    if ("id" in result) {
+      if (!owner.resolvedCalls.some(c => c.target === result.id)) {
+        owner.resolvedCalls.push({ target: result.id, line: callLine });
       }
     } else {
-      const callName = getCallName(node);
-      if (callName && !owner.unresolvedCalls.some(c => c.target === callName)) {
-        owner.unresolvedCalls.push({ target: callName, line: callLine });
+      if (!owner.unresolvedCalls.some(c => c.target === result.name)) {
+        owner.unresolvedCalls.push({
+          target: result.name,
+          qualifiedName: result.qualifiedName,
+          line: callLine,
+        });
       }
     }
   });

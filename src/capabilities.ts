@@ -1,40 +1,46 @@
 /**
- * 能力词汇表（5 个核心能力）
+ * 能力配置 — 全局唯一配置源
  *
- * 对齐 Koka 语言的效果系统：
- *   IO ≈ io, Fallible ≈ exn, Mutable ≈ st, Async ≈ async, Impure ≈ ndet
+ * 8 个能力分为两类三组：
+ *   传播不可阻断: IO, Impure
+ *   传播可阻断:   Fallible, Async, Mutable
+ *   阻断:        HandleFallible, HandleAsync, HandleMutable
  */
 
-export const CAPABILITY_WORDS = {
-  IO: "读写外部系统（网络、文件、数据库）",
-  Fallible: "可能失败（校验失败、解析失败、网络错误）",
-  Mutable: "参数含非 readonly 引用类型（可能修改调用方数据）",
-  Async: "返回 Promise/AsyncIterable，调用方需要 await",
-  Impure: "依赖隐式环境（时间、随机数、全局变量）",
-} as const;
+export type Capability =
+  | "IO" | "Impure" | "Fallible" | "Async" | "Mutable"
+  | "HandleFallible" | "HandleAsync" | "HandleMutable";
 
-export type Capability = keyof typeof CAPABILITY_WORDS;
+export interface CapabilityDef {
+  kind: "propagate" | "block";
+  autoDetectable: boolean;
+  scorable: boolean;
+  blocks?: Capability;
+  blockedBy?: Capability;
+}
 
-export const ALL_CAPABILITIES = Object.keys(CAPABILITY_WORDS) as Capability[];
-export const VALID_CAPABILITY_NAMES = new Set(ALL_CAPABILITIES);
-
-/**
- * 能力的消除性分类
- *   wrappable: 可在函数内部消化，不传播到调用方
- *   rewritable: 需要重写原函数才能消除
- *   isolate-only: 业务固有需求，只能缩小携带面积
- */
-export const ELIMINABILITY: Record<Capability, "wrappable" | "rewritable" | "isolate-only"> = {
-  Fallible: "wrappable",
-  Async: "wrappable",
-  Mutable: "wrappable",
-  Impure: "rewritable",
-  IO: "isolate-only",
+export const CAPABILITY_DEFS: Record<Capability, CapabilityDef> = {
+  IO:              { kind: "propagate", autoDetectable: false, scorable: true },
+  Impure:          { kind: "propagate", autoDetectable: false, scorable: true },
+  Fallible:        { kind: "propagate", autoDetectable: true,  scorable: true,  blockedBy: "HandleFallible" },
+  Async:           { kind: "propagate", autoDetectable: true,  scorable: true,  blockedBy: "HandleAsync" },
+  Mutable:         { kind: "propagate", autoDetectable: true,  scorable: true,  blockedBy: "HandleMutable" },
+  HandleFallible:  { kind: "block",     autoDetectable: false, scorable: false, blocks: "Fallible" },
+  HandleAsync:     { kind: "block",     autoDetectable: false, scorable: false, blocks: "Async" },
+  HandleMutable:   { kind: "block",     autoDetectable: false, scorable: false, blocks: "Mutable" },
 };
 
-/** wrappable 能力集合，可用 ! 语法声明已消化 */
-export const WRAPPABLE_CAPABILITIES = new Set<Capability>(
-  (Object.entries(ELIMINABILITY) as [Capability, string][])
-    .filter(([, v]) => v === "wrappable")
-    .map(([k]) => k)
+export const ALL_CAPABILITIES = Object.keys(CAPABILITY_DEFS) as Capability[];
+export const VALID_CAPABILITY_NAMES = new Set<Capability>(ALL_CAPABILITIES);
+
+export const PROPAGATE_CAPS = ALL_CAPABILITIES.filter(c => CAPABILITY_DEFS[c].kind === "propagate");
+export const BLOCK_CAPS = ALL_CAPABILITIES.filter(c => CAPABILITY_DEFS[c].kind === "block");
+export const SCORABLE_CAPS = ALL_CAPABILITIES.filter(c => CAPABILITY_DEFS[c].scorable);
+export const AUTO_DETECTABLE_CAPS = ALL_CAPABILITIES.filter(c => CAPABILITY_DEFS[c].autoDetectable);
+
+/** propagate cap → its block cap */
+export const BLOCK_PAIRS = new Map<Capability, Capability>(
+  PROPAGATE_CAPS
+    .filter(c => CAPABILITY_DEFS[c].blockedBy)
+    .map(c => [c, CAPABILITY_DEFS[c].blockedBy!]),
 );

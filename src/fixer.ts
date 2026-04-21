@@ -1,22 +1,18 @@
 /**
  * 自动修复器
  *
- * 基于分析结果，修改源文件的 @capability JSDoc：
- * - 补全缺失的能力（escalation/mismatch 产生的）
- * - 移除多余的能力（overDeclared）
+ * 基于诊断结果修改源文件的 @capability JSDoc：
+ * - undeclared → 加空 @capability
+ * - missing_capability 中不可阻断能力(IO/Impure) → 自动补
+ * - missing_capability 中可阻断能力(Fallible/Async/Mutable) → 不补，保留诊断
+ * - 多余声明 → 移除（有未解析调用时不移除）
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { ALL_CAPABILITIES, type Capability } from "./capabilities.js";
+import { ALL_CAPABILITIES, CAPABILITY_DEFS, type Capability } from "./capabilities.js";
 import type { FunctionInfo, ProjectScan } from "./scanner.js";
 import type { AnalysisResult } from "./analyzer.js";
 import { DiagnosticKind } from "./analyzer.js";
-
-interface FileEdit {
-  filePath: string;
-  /** 按函数分组的修改 */
-  functionEdits: Map<string, { needed: Set<Capability>; encountered: Set<Capability> }>;
-}
 
 export interface FixChange {
   filePath: string;
@@ -38,128 +34,140 @@ export function applyFixes(
   result: AnalysisResult,
   dryRun?: boolean,
 ): FixResult {
-  // 收集每个函数需要的能力（声明 + mismatch + escalation 传播的）
-  const needed = new Map<string, Set<Capability>>();
-  const encountered = new Map<string, Set<Capability>>();
+  // Collect target caps for each declared function
+  const targetCapsMap = new Map<string, Set<Capability>>();
 
   for (const [id, fn] of scan.functions) {
     if (!fn.isDeclared) continue;
-    // source-of-truth: effective caps（含 mismatch 注入的）
-    const eff = new Set(result.effectiveCaps.get(id) ?? fn.declaredCaps);
-    needed.set(id, new Set(eff));
-    encountered.set(id, new Set<Capability>());
+    const effective = result.effectiveCaps.get(id) ?? fn.declaredCaps;
+    targetCapsMap.set(id, new Set(effective));
   }
 
-  // 从 escalation diagnostics 收集缺失的能力
+  // From missing_capability diagnostics: add non-blockable caps only
   for (const d of result.diagnostics) {
-    if (d.kind === DiagnosticKind.Escalation && d.missingCaps) {
+    if (d.kind === DiagnosticKind.MissingCapability && d.missingCaps) {
       const fn = scan.functions.get(d.functionId);
       if (!fn || !fn.isDeclared) continue;
-      const caps = needed.get(d.functionId)!;
-      for (const c of d.missingCaps) caps.add(c);
-    }
-  }
-
-  // 计算每个函数调用链中实际遇到的能力（用于检测多余声明）
-  for (const [id, fn] of scan.functions) {
-    if (!fn.isDeclared) continue;
-    const enc = encountered.get(id)!;
-
-    // 自身特征
-    if (fn.returnsAsync) enc.add("Async");
-    if (fn.returnsNullable) enc.add("Fallible");
-    if (fn.mutableParams.length > 0) enc.add("Mutable");
-
-    // 已解析调用的 callee caps
-    for (const call of fn.resolvedCalls) {
-      const calleeFn = scan.functions.get(call.target);
-      if (!calleeFn) continue;
-      const calleeCaps = result.effectiveCaps.get(call.target) ?? calleeFn.declaredCaps;
-      for (const c of calleeCaps) enc.add(c);
-    }
-  }
-
-  // 按文件分组修改
-  const fileEdits = new Map<string, Map<string, { fn: FunctionInfo; targetCaps: Set<Capability> }>>();
-
-  for (const [id, fn] of scan.functions) {
-    if (!fn.isDeclared) continue;
-
-    const need = needed.get(id)!;
-    const enc = encountered.get(id)!;
-
-    // 目标能力 = needed ∩ encountered（只保留确实需要且遇到的）
-    // 但如果有 unknown calls，不移除（不确定是否需要）
-    const hasUnknown = fn.unresolvedCalls.length > 0;
-    const target = new Set<Capability>();
-
-    for (const c of need) target.add(c);
-
-    // 移除多余：在 encountered 中没出现的，且没有 unknown calls
-    if (!hasUnknown) {
-      for (const c of target) {
-        if (!enc.has(c)) target.delete(c);
+      const target = targetCapsMap.get(d.functionId)!;
+      for (const c of d.missingCaps) {
+        // Only auto-add non-blockable propagate caps (IO, Impure)
+        if (CAPABILITY_DEFS[c].kind === "propagate" && !CAPABILITY_DEFS[c].autoDetectable) {
+          target.add(c);
+        }
       }
     }
+  }
 
-    // 检查是否有变化
+  // Remove excess declarations (caps not encountered in call chain)
+  for (const [id, fn] of scan.functions) {
+    if (!fn.isDeclared) continue;
+    if (fn.unresolvedCalls.length > 0) continue; // don't remove if unknown calls exist
+
+    const target = targetCapsMap.get(id)!;
+    const encountered = new Set<Capability>();
+
+    // Self features
+    if (fn.returnsAsync) encountered.add("Async");
+    if (fn.returnsNullable) encountered.add("Fallible");
+    if (fn.mutableParams.length > 0) encountered.add("Mutable");
+
+    // Callee caps
+    for (const call of fn.resolvedCalls) {
+      const calleeCaps = result.effectiveCaps.get(call.target);
+      if (calleeCaps) for (const c of calleeCaps) encountered.add(c);
+    }
+
+    for (const c of [...target]) {
+      if (!encountered.has(c)) target.delete(c);
+    }
+  }
+
+  // Handle undeclared functions: they need empty @capability added
+  const undeclaredFns = new Set<string>();
+  for (const d of result.diagnostics) {
+    if (d.kind === DiagnosticKind.Undeclared) {
+      undeclaredFns.add(d.functionId);
+    }
+  }
+
+  // Group edits by file
+  const fileEdits = new Map<string, Array<{ fn: FunctionInfo; targetCaps: Set<Capability> | null; isUndeclared: boolean }>>();
+
+  // Declared function edits
+  for (const [id, fn] of scan.functions) {
+    if (!fn.isDeclared) {
+      if (undeclaredFns.has(id)) {
+        if (!fileEdits.has(fn.filePath)) fileEdits.set(fn.filePath, []);
+        fileEdits.get(fn.filePath)!.push({ fn, targetCaps: null, isUndeclared: true });
+      }
+      continue;
+    }
+
+    const target = targetCapsMap.get(id)!;
     const current = fn.declaredCaps;
     const added = [...target].filter(c => !current.has(c));
     const removed = [...current].filter(c => !target.has(c));
     if (added.length === 0 && removed.length === 0) continue;
 
-    if (!fileEdits.has(fn.filePath)) fileEdits.set(fn.filePath, new Map());
-    fileEdits.get(fn.filePath)!.set(id, { fn, targetCaps: target });
+    if (!fileEdits.has(fn.filePath)) fileEdits.set(fn.filePath, []);
+    fileEdits.get(fn.filePath)!.push({ fn, targetCaps: target, isUndeclared: false });
   }
 
-  // 应用修改
+  // Apply edits
   let filesModified = 0;
   let capsAdded = 0;
   let capsRemoved = 0;
   const changes: FixChange[] = [];
 
   for (const [filePath, edits] of fileEdits) {
-    let source = readFileSync(filePath, "utf8");
+    let lines = readFileSync(filePath, "utf8").split("\n");
     let modified = false;
 
-    // 按行号从后往前修改，避免偏移
-    const sortedEdits = [...edits.values()].sort((a, b) => b.fn.line - a.fn.line);
+    // Sort by line descending to avoid offset issues
+    const sorted = edits.sort((a, b) => b.fn.line - a.fn.line);
 
-    for (const { fn, targetCaps } of sortedEdits) {
-      const lines = source.split("\n");
+    for (const { fn, targetCaps, isUndeclared } of sorted) {
+      if (isUndeclared) {
+        // Add empty @capability before function declaration
+        const lineIdx = fn.line - 1;
+        const indent = lines[lineIdx].match(/^(\s*)/)?.[1] ?? "";
+        lines.splice(lineIdx, 0, `${indent}/** @capability */`);
+        modified = true;
+        changes.push({ filePath, functionName: fn.name, line: fn.line, added: [], removed: [] });
+        continue;
+      }
 
-      // 找到 @capability 所在行
-      let capLine = -1;
+      // Find existing @capability line
+      let capLineIdx = -1;
       for (let i = Math.max(0, fn.line - 6); i < fn.line; i++) {
         if (lines[i]?.match(/@capability/)) {
-          capLine = i;
+          capLineIdx = i;
           break;
         }
       }
-      if (capLine === -1) continue;
+      if (capLineIdx === -1) continue;
 
-      const sorted = ALL_CAPABILITIES.filter(c => targetCaps.has(c));
-      const digestedParts = ALL_CAPABILITIES.filter(c => fn.digestedCaps.has(c)).map(c => `!${c}`);
-      const allParts = [...sorted, ...digestedParts];
-      const capText = allParts.length > 0 ? " " + allParts.join(" ") : "";
-      const oldLine = lines[capLine];
+      const capsSorted = ALL_CAPABILITIES.filter(c => targetCaps!.has(c));
+      const capText = capsSorted.length > 0 ? " " + capsSorted.join(" ") : "";
+      const oldLine = lines[capLineIdx];
       const newLine = oldLine.replace(/@capability[^*\n]*/, `@capability${capText} `);
 
       if (oldLine !== newLine) {
-        lines[capLine] = newLine;
-        source = lines.join("\n");
+        lines[capLineIdx] = newLine;
         modified = true;
 
-        const added = sorted.filter(c => !fn.declaredCaps.has(c as Capability));
-        const removed = [...fn.declaredCaps].filter(c => !targetCaps.has(c));
+        const added = capsSorted.filter(c => !fn.declaredCaps.has(c as Capability));
+        const removed = [...fn.declaredCaps].filter(c => !targetCaps!.has(c));
         capsAdded += added.length;
         capsRemoved += removed.length;
-        changes.push({ filePath, functionName: fn.name, line: fn.line, added: added as Capability[], removed: removed as Capability[] });
+        changes.push({ filePath, functionName: fn.name, line: fn.line, added: added as Capability[], removed });
       }
     }
 
     if (modified && !dryRun) {
-      writeFileSync(filePath, source);
+      writeFileSync(filePath, lines.join("\n"));
+      filesModified++;
+    } else if (modified) {
       filesModified++;
     }
   }

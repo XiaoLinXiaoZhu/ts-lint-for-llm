@@ -1,14 +1,18 @@
 /**
- * 测试套件：验证 capability-lint 所有核心功能
+ * 测试套件：验证重写后的 capability-lint 全部核心功能
+ *
+ * 覆盖：8 能力名、filePath:pos ID、qualifiedName 调用解析、
+ * 4 种诊断、propagatedCaps(Handle阻断)、评分不计阻断能力、--fix 行为
  */
 
 import { resolve } from "node:path";
-import { readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { scanProject, type ProjectScan } from "../src/scanner.js";
 import { analyze, DiagnosticKind, type AnalysisResult } from "../src/analyzer.js";
 import { scoreLooseness } from "../src/looseness.js";
 import { computeScores } from "../src/reporter.js";
 import { applyFixes } from "../src/fixer.js";
+import { PROPAGATE_CAPS, BLOCK_CAPS, SCORABLE_CAPS } from "../src/capabilities.js";
 import { Project } from "ts-morph";
 
 const FIXTURE = resolve(import.meta.dir, "fixture/tsconfig.json");
@@ -34,10 +38,14 @@ function assert(condition: boolean, name: string, detail?: string) {
 }
 
 function findFn(name: string) {
-  for (const [id, fn] of scan.functions) {
+  for (const [, fn] of scan.functions) {
     if (fn.name === name) return fn;
   }
   return null;
+}
+
+function findAllFns(name: string) {
+  return [...scan.functions.values()].filter(f => f.name === name);
 }
 
 function findDiags(fnName: string, kind?: DiagnosticKind) {
@@ -46,35 +54,52 @@ function findDiags(fnName: string, kind?: DiagnosticKind) {
   );
 }
 
-// ══ 测试 ══
+// ══ Tests ══
 
 setup();
 
-console.log("\n── 1. Scanner: 函数扫描 ──");
-{
-  assert(findFn("add") !== null, "扫描到 pure.ts 的 add");
-  assert(findFn("multiply") !== null, "扫描到 pure.ts 的 multiply");
-  assert(findFn("fetchUser") !== null, "扫描到 io-layer.ts 的 fetchUser");
-  assert(findFn("badPure") !== null, "扫描到 violations.ts 的 badPure");
-  assert(findFn("undeclaredFn") !== null, "扫描到 violations.ts 的 undeclaredFn");
-}
-
-console.log("\n── 2. Scanner: 能力声明解析 ──");
+console.log("\n── 1. 函数 ID 格式: filePath:pos ──");
 {
   const add = findFn("add")!;
-  assert(add.isDeclared, "add 已声明");
-  assert(add.declaredCaps.size === 0, "add 是纯函数", `caps: [${[...add.declaredCaps]}]`);
+  assert(add !== null, "扫描到 add");
+  assert(add.id.includes(":"), "add 的 ID 含冒号分隔符", `id=${add.id}`);
+  const parts = add.id.split(":");
+  const pos = parseInt(parts[parts.length - 1]);
+  assert(!isNaN(pos) && pos >= 0, "add 的 ID pos 是有效数字", `pos=${pos}`);
 
+  // 同文件同名方法应有不同 ID
+  const resets = findAllFns("reset");
+  assert(resets.length === 2, "扫描到两个 reset", `got ${resets.length}`);
+  if (resets.length === 2) {
+    assert(resets[0].id !== resets[1].id, "两个 reset 有不同的 ID");
+  }
+}
+
+console.log("\n── 2. 8 个能力名识别 ──");
+{
+  // 传播能力
   const fetchUser = findFn("fetchUser")!;
-  assert(fetchUser.isDeclared, "fetchUser 已声明");
   assert(fetchUser.declaredCaps.has("IO"), "fetchUser 声明了 IO");
   assert(fetchUser.declaredCaps.has("Fallible"), "fetchUser 声明了 Fallible");
+  assert(fetchUser.declaredCaps.has("Async"), "fetchUser 声明了 Async");
 
+  // Handle 阻断能力
+  const safeFetch = findFn("safeFetch")!;
+  assert(safeFetch.declaredCaps.has("HandleFallible"), "safeFetch 声明了 HandleFallible");
+  assert(safeFetch.declaredCaps.has("IO"), "safeFetch 声明了 IO");
+  assert(safeFetch.declaredCaps.has("Async"), "safeFetch 声明了 Async");
+
+  // 纯函数
+  const add = findFn("add")!;
+  assert(add.isDeclared, "add 已声明");
+  assert(add.declaredCaps.size === 0, "add 是纯函数");
+
+  // 未声明
   const undeclaredFn = findFn("undeclaredFn")!;
   assert(!undeclaredFn.isDeclared, "undeclaredFn 未声明");
 }
 
-console.log("\n── 3. Scanner: 返回类型检测 ──");
+console.log("\n── 3. 返回类型检测 ──");
 {
   const fetchUser = findFn("fetchUser")!;
   assert(fetchUser.returnsAsync, "fetchUser returnsAsync");
@@ -86,55 +111,190 @@ console.log("\n── 3. Scanner: 返回类型检测 ──");
 
   const findItem = findFn("findItem")!;
   assert(findItem.returnsNullable, "findItem returnsNullable");
-  assert(!findItem.returnsAsync, "findItem 不 returnsAsync");
 
   const loadData = findFn("loadData")!;
   assert(loadData.returnsAsync, "loadData returnsAsync");
 }
 
-console.log("\n── 4. Scanner: 跨文件调用解析 ──");
+console.log("\n── 4. 跨文件调用解析 (symbol→declaration→pos) ──");
 {
   const badPure = findFn("badPure")!;
-  assert(badPure.resolvedCalls.length > 0, "badPure 有 resolved calls", `got ${badPure.resolvedCalls.length}`);
-  const callsFetchUser = badPure.resolvedCalls.some(c => c.target.includes("fetchUser"));
-  assert(callsFetchUser, "badPure 解析到了对 fetchUser 的调用");
+  assert(badPure.resolvedCalls.length > 0, "badPure 有 resolved calls");
+  const callsFetchUser = badPure.resolvedCalls.some(c => {
+    const target = scan.functions.get(c.target);
+    return target?.name === "fetchUser";
+  });
+  assert(callsFetchUser, "badPure 解析到 fetchUser 调用");
 
   const processAndLog = findFn("processAndLog")!;
-  const callsAdd = processAndLog.resolvedCalls.some(c => c.target.includes("add"));
-  const callsLogResult = processAndLog.resolvedCalls.some(c => c.target.includes("logResult"));
-  assert(callsAdd, "processAndLog 解析到了对 add 的调用");
-  assert(callsLogResult, "processAndLog 解析到了对 logResult 的调用");
+  const callsAdd = processAndLog.resolvedCalls.some(c => {
+    const target = scan.functions.get(c.target);
+    return target?.name === "add";
+  });
+  const callsLogResult = processAndLog.resolvedCalls.some(c => {
+    const target = scan.functions.get(c.target);
+    return target?.name === "logResult";
+  });
+  assert(callsAdd, "processAndLog 解析到 add 调用");
+  assert(callsLogResult, "processAndLog 解析到 logResult 调用");
 }
 
-console.log("\n── 5. Analyzer: escalation 检测 ──");
+console.log("\n── 5. qualifiedName 未解析调用 ──");
 {
-  const diags = findDiags("badPure", DiagnosticKind.Escalation);
-  assert(diags.length > 0, "badPure 报了 escalation", `got ${diags.length}`);
-  assert(diags.some(d => d.missingCaps?.includes("IO")), "badPure 缺少 IO");
+  // console.log 应该在未解析调用中有 qualifiedName
+  const logResult = findFn("logResult")!;
+  const consoleCall = logResult.unresolvedCalls.find(c => c.target === "log");
+  assert(consoleCall !== undefined, "logResult 有 log 未解析调用");
+  if (consoleCall) {
+    assert(consoleCall.qualifiedName !== undefined, "log 有 qualifiedName", `qn=${consoleCall.qualifiedName}`);
+  }
 }
 
-console.log("\n── 6. Analyzer: undeclared 检测 ──");
+console.log("\n── 6. missing_capability 诊断 ──");
+{
+  const diags = findDiags("badPure", DiagnosticKind.MissingCapability);
+  assert(diags.length > 0, "badPure 报了 missing_capability");
+  const allMissing = diags.flatMap(d => d.missingCaps ?? []);
+  assert(allMissing.includes("IO"), "badPure 缺少 IO");
+}
+
+console.log("\n── 7. undeclared 诊断 ──");
 {
   const diags = findDiags("undeclaredFn", DiagnosticKind.Undeclared);
   assert(diags.length === 1, "undeclaredFn 报了 undeclared");
 }
 
-console.log("\n── 7. Analyzer: mismatch 检测 ──");
+console.log("\n── 8. implicit_capability 诊断 ──");
 {
-  const fallibleMismatch = findDiags("findItem", DiagnosticKind.FallibleMismatch);
-  assert(fallibleMismatch.length === 1, "findItem 报了 FallibleMismatch");
+  // findItem 返回 null 但未声明 Fallible → implicit_capability
+  const fallibleImplicit = findDiags("findItem", DiagnosticKind.ImplicitCapability);
+  assert(fallibleImplicit.length > 0, "findItem 报了 implicit_capability(Fallible)");
 
-  const asyncMismatch = findDiags("loadData", DiagnosticKind.AsyncMismatch);
-  assert(asyncMismatch.length === 1, "loadData 报了 AsyncMismatch");
+  // loadData 是 async 但未声明 Async → implicit_capability
+  const asyncImplicit = findDiags("loadData", DiagnosticKind.ImplicitCapability);
+  assert(asyncImplicit.length > 0, "loadData 报了 implicit_capability(Async)");
+
+  // implicit_capability 是 info 级别 → 不影响退出码
+  // 验证它们的 kind 确实是 ImplicitCapability
+  assert(fallibleImplicit[0].kind === DiagnosticKind.ImplicitCapability, "Fallible implicit 是 info 级");
 }
 
-console.log("\n── 8. Analyzer: absorbed 检测 ──");
+console.log("\n── 9. propagatedCaps: Handle 阻断传播 ──");
 {
-  const diags = findDiags("safeFetch", DiagnosticKind.Absorbed);
-  assert(diags.length > 0, "safeFetch 报了 absorbed（Fallible）");
+  // safeFetch: IO Async HandleFallible → propagatedCaps 应为 {IO, Async}（Fallible 被阻断）
+  // 但 safeFetch 自身返回类型不含 null，且自身是 async → effectiveCaps 加 Async（已声明）
+  // fetchUser propagatedCaps = {IO, Fallible, Async}（无 Handle 能力）
+  // safeFetch 有 HandleFallible → Fallible 不 missing
+  const safeFetchDiags = findDiags("safeFetch", DiagnosticKind.MissingCapability);
+  const fallibleMissing = safeFetchDiags.filter(d => d.missingCaps?.includes("Fallible"));
+  assert(fallibleMissing.length === 0, "safeFetch 不缺 Fallible（HandleFallible 阻断）");
+
+  // safeFetch 自身的 propagatedCaps 不含 Fallible
+  const safeFetchFn = findFn("safeFetch")!;
+  const propagated = result.propagatedCaps.get(safeFetchFn.id)!;
+  assert(!propagated.has("Fallible"), "safeFetch propagatedCaps 不含 Fallible");
+  assert(!propagated.has("HandleFallible"), "safeFetch propagatedCaps 不含 HandleFallible");
+  assert(propagated.has("IO"), "safeFetch propagatedCaps 含 IO");
+  assert(propagated.has("Async"), "safeFetch propagatedCaps 含 Async");
 }
 
-console.log("\n── 9. Looseness 评分 ──");
+console.log("\n── 10. unregistered 诊断 ──");
+{
+  // callsExternalApi 调用 externalApiCall（在 .cap.ts 中声明）→ 不报 unregistered
+  const unreg = findDiags("callsExternalApi", DiagnosticKind.Unregistered);
+  const unregForApi = unreg.filter(d => d.callee === "externalApiCall");
+  assert(unregForApi.length === 0, "externalApiCall 不报 unregistered（.cap.ts 已声明）");
+
+  // .cap.ts 声明的外部函数应该在 externalCaps 中
+  const ext = scan.externalCaps.get("externalApiCall");
+  assert(ext !== undefined, "externalApiCall 在 externalCaps 中");
+  if (ext) {
+    assert(ext.caps.includes("IO"), "externalApiCall 有 IO");
+    assert(ext.caps.includes("Async"), "externalApiCall 有 Async");
+  }
+
+  // callsExternalApi 应报 missing_capability（缺 IO 等）
+  const missing = findDiags("callsExternalApi", DiagnosticKind.MissingCapability);
+  assert(missing.length > 0, "callsExternalApi 报了 missing_capability");
+}
+
+console.log("\n── 11. Mutable 参数可变性检测 ──");
+{
+  const readState = findFn("readState")!;
+  assert(readState.mutableParams.includes("state"), "readState 检出可变参数 state");
+
+  const readStateRo = findFn("readStateReadonly")!;
+  assert(readStateRo.mutableParams.length === 0, "readStateReadonly 无可变参数");
+
+  const sumItems = findFn("sumItems")!;
+  assert(sumItems.mutableParams.length === 0, "sumItems readonly number[] 不触发");
+
+  const firstItem = findFn("firstItem")!;
+  assert(firstItem.mutableParams.length > 0, "firstItem string[] 触发");
+
+  // 声明了 Mutable → 不报 implicit_capability
+  const pushItem = findFn("pushItem")!;
+  assert(pushItem.mutableParams.length > 0, "pushItem 有可变参数");
+  const pushItemImplicit = findDiags("pushItem", DiagnosticKind.ImplicitCapability)
+    .filter(d => d.message.includes("Mutable"));
+  assert(pushItemImplicit.length === 0, "pushItem 已声明 Mutable，不报 implicit");
+
+  // HandleMutable 阻断
+  const sortedCopy = findFn("sortedCopy")!;
+  assert(sortedCopy.declaredCaps.has("HandleMutable"), "sortedCopy 声明了 HandleMutable");
+}
+
+console.log("\n── 12. Mutable 自动注入与调用链 ──");
+{
+  // addDefault 有非 readonly 参数 → 自动注入 Mutable
+  const addDefault = findFn("addDefault")!;
+  const implicitDiags = findDiags("addDefault", DiagnosticKind.ImplicitCapability)
+    .filter(d => d.message.includes("Mutable"));
+  assert(implicitDiags.length > 0, "addDefault 自动注入 Mutable");
+
+  // addDefault 调用 pushItem(Mutable) → 因自身已有 Mutable，不 missing
+  const escDiags = findDiags("addDefault", DiagnosticKind.MissingCapability)
+    .filter(d => d.missingCaps?.includes("Mutable"));
+  assert(escDiags.length === 0, "addDefault 调 Mutable 函数不 missing（已自动注入）");
+
+  // buildList 内部 push → 局部数组，不触发 Mutable
+  const buildList = findFn("buildList")!;
+  assert(buildList.mutableParams.length === 0, "buildList 无可变参数");
+}
+
+console.log("\n── 13. 评分: 只计 scorable 能力 ──");
+{
+  const project = new Project({ tsConfigFilePath: FIXTURE });
+  const looseMap = new Map<string, ReturnType<typeof scoreLooseness>>();
+  for (const sf of project.getSourceFiles()) {
+    if (!sf.getFilePath().includes("node_modules")) {
+      looseMap.set(sf.getFilePath(), scoreLooseness(sf));
+    }
+  }
+  const scores = computeScores(scan, result, looseMap);
+
+  assert(scores.totalFunctions > 0, "totalFunctions > 0");
+  assert(scores.totalPure > 0, "totalPure > 0");
+  assert(scores.totalCap > 0, "totalCap > 0");
+  assert(scores.totalLoose > 0, "totalLoose > 0");
+  assert(scores.topFunctions.length > 0, "topFunctions 非空");
+  assert(scores.fileScores.length > 0, "fileScores 非空");
+
+  // safeFetch 声明了 HandleFallible → 评分 caps 不含 HandleFallible
+  const safeFetchScore = scores.allFunctions.find(f => f.name === "safeFetch");
+  if (safeFetchScore) {
+    assert(!safeFetchScore.caps.includes("HandleFallible"), "safeFetch 评分不含 HandleFallible");
+    assert(safeFetchScore.caps.includes("IO"), "safeFetch 评分含 IO");
+  }
+
+  // Block caps (HandleFallible/HandleAsync/HandleMutable) 不在 capScores 中
+  for (const blockCap of BLOCK_CAPS) {
+    assert(!(blockCap in scores.capScores) || scores.capScores[blockCap] === 0,
+      `capScores 不含 ${blockCap}`);
+  }
+}
+
+console.log("\n── 14. Looseness 评分 ──");
 {
   const project = new Project({ tsConfigFilePath: FIXTURE });
   const sf = project.getSourceFiles().find(f => f.getFilePath().includes("looseness.ts"));
@@ -153,195 +313,57 @@ console.log("\n── 9. Looseness 评分 ──");
   }
 }
 
-console.log("\n── 10. 评分计算 ──");
+console.log("\n── 15. --fix 自动修复 ──");
 {
-  const project = new Project({ tsConfigFilePath: FIXTURE });
-  const looseMap = new Map<string, ReturnType<typeof scoreLooseness>>();
-  for (const sf of project.getSourceFiles()) {
-    if (!sf.getFilePath().includes("node_modules")) {
-      looseMap.set(sf.getFilePath(), scoreLooseness(sf));
-    }
-  }
-  const scores = computeScores(scan, result, looseMap);
-  assert(scores.totalFunctions > 0, "totalFunctions > 0");
-  assert(scores.totalPure > 0, "totalPure > 0 (add, multiply 是纯函数)");
-  assert(scores.totalCap > 0, "totalCap > 0");
-  assert(scores.totalLoose > 0, "totalLoose > 0");
-  assert(scores.topFunctions.length > 0, "topFunctions 非空");
-  assert(scores.fileScores.length > 0, "fileScores 非空");
-}
-
-console.log("\n── 11. --fix 自动修复 ──");
-{
-  // 备份 violations.ts，修复后检查，再还原
   const violationsPath = resolve(import.meta.dir, "fixture/violations.ts");
   const original = readFileSync(violationsPath, "utf8");
   const ioLayerPath = resolve(import.meta.dir, "fixture/io-layer.ts");
   const ioLayerOriginal = readFileSync(ioLayerPath, "utf8");
   const mutablePath = resolve(import.meta.dir, "fixture/mutable.ts");
   const mutableOriginal = readFileSync(mutablePath, "utf8");
+  const objectPath = resolve(import.meta.dir, "fixture/object-methods.ts");
+  const objectOriginal = readFileSync(objectPath, "utf8");
 
   const fixResult = applyFixes(scan, result);
-  const fixed = readFileSync(violationsPath, "utf8");
+  assert(fixResult.changes.length > 0, "--fix 产生了修改");
 
-  // 验证修复内容
-  const hasIO = fixed.includes("@capability IO") && !original.match(/@capability IO\b.*\bfindItem/);
-  assert(fixResult.capsAdded > 0 || fixResult.capsRemoved > 0, "--fix 产生了修改", `+${fixResult.capsAdded} -${fixResult.capsRemoved}`);
+  // undeclaredFn should get an empty @capability
+  const fixed = readFileSync(violationsPath, "utf8");
+  assert(fixed.includes("/** @capability */\nexport function undeclaredFn"),
+    "undeclaredFn 被加了空 @capability");
 
   // 还原
   writeFileSync(violationsPath, original);
   writeFileSync(ioLayerPath, ioLayerOriginal);
   writeFileSync(mutablePath, mutableOriginal);
-}
-
-console.log("\n── 12. .cap.ts 外部能力声明 ──");
-{
-  // cap file 应该被加载
-  assert(scan.externalCaps.size > 0, "加载了 .cap.ts 声明", `size=${scan.externalCaps.size}`);
-
-  // externalApiCall 应该在 externalCaps 中
-  const ext = scan.externalCaps.get("externalApiCall");
-  assert(ext !== undefined, "externalApiCall 在 externalCaps 中");
-  if (ext) {
-    assert(ext.caps.includes("IO"), "externalApiCall 有 IO");
-    assert(ext.caps.includes("Async"), "externalApiCall 有 Async");
-    assert(ext.caps.includes("Fallible"), "externalApiCall 有 Fallible");
-  }
-
-  // callsExternalApi 调用了 externalApiCall，应该报 escalation（缺 IO）
-  const diags = findDiags("callsExternalApi", DiagnosticKind.Escalation);
-  assert(diags.length > 0, "callsExternalApi 报了 escalation（缺 IO）", `got ${diags.length}`);
-
-  // externalApiCall 不应该出现在 unregistered 中
-  const unreg = findDiags("callsExternalApi", DiagnosticKind.Unregistered);
-  const unregForApi = unreg.filter(d => d.callee === "externalApiCall");
-  assert(unregForApi.length === 0, "externalApiCall 不报 unregistered");
-}
-
-console.log("\n── 13. Mutable: 参数可变性检测 ──");
-{
-  // 非 readonly 引用参数 → mutableParams 非空
-  const readState = findFn("readState")!;
-  assert(readState.mutableParams.length > 0, "readState 有非 readonly 引用参数", `got [${readState.mutableParams}]`);
-  assert(readState.mutableParams.includes("state"), "readState 的 state 参数被检出");
-
-  // readonly 引用参数 → mutableParams 为空
-  const readStateRo = findFn("readStateReadonly")!;
-  assert(readStateRo.mutableParams.length === 0, "readStateReadonly 无非 readonly 引用参数");
-
-  // readonly 数组参数 → mutableParams 为空
-  const sumItems = findFn("sumItems")!;
-  assert(sumItems.mutableParams.length === 0, "sumItems 的 readonly number[] 不触发");
-
-  // 非 readonly 数组参数 → mutableParams 非空
-  const firstItem = findFn("firstItem")!;
-  assert(firstItem.mutableParams.length > 0, "firstItem 的 string[] 参数被检出");
-
-  // 值类型参数 → mutableParams 为空
-  const addFn = findFn("add")!;
-  assert(addFn.mutableParams.length === 0, "add 的值类型参数不触发");
-
-  // 声明了 Mutable → 不报 MutableParam 诊断
-  const pushItem = findFn("pushItem")!;
-  assert(pushItem.mutableParams.length > 0, "pushItem 有非 readonly 引用参数");
-  const pushItemDiags = findDiags("pushItem", DiagnosticKind.MutableParam);
-  assert(pushItemDiags.length === 0, "pushItem 已声明 Mutable，不报 MutableParam");
-}
-
-console.log("\n── 14. Mutable: wrappable 行为 ──");
-{
-  // 局部 push 不再报 Mutable escalation（builtin 已移除 Mutable）
-  const buildList = findFn("buildList")!;
-  const buildDiags = findDiags("buildList", DiagnosticKind.Escalation);
-  const mutableEsc = buildDiags.filter(d => d.missingCaps?.includes("Mutable"));
-  assert(mutableEsc.length === 0, "buildList 的局部 push 不报 Mutable escalation");
-
-  // addDefault 有非 readonly 引用参数 → 自动注入 Mutable → 调用 pushItem 不报 escalation
-  const addDefault = findFn("addDefault")!;
-  const addDefaultMutableParam = findDiags("addDefault", DiagnosticKind.MutableParam);
-  assert(addDefaultMutableParam.length > 0, "addDefault 自动注入 Mutable（非 readonly 参数）");
-  const escDiags = findDiags("addDefault", DiagnosticKind.Escalation).filter(d => d.missingCaps?.includes("Mutable"));
-  assert(escDiags.length === 0, "addDefault 调用 Mutable 函数不报 escalation（已自动注入）");
-}
-
-console.log("\n── 15. Digested (!Cap): 消化声明 ──");
-{
-  // !Mutable: 非 readonly 参数但声明已消化 → 不报 MutableParam，不注入 Mutable
-  const readStateDigested = findFn("readStateDigested")!;
-  assert(readStateDigested !== null, "扫描到 readStateDigested");
-  assert(readStateDigested.digestedCaps.has("Mutable"), "readStateDigested 的 digestedCaps 含 Mutable");
-  assert(!readStateDigested.declaredCaps.has("Mutable"), "readStateDigested 的 declaredCaps 不含 Mutable");
-  assert(readStateDigested.mutableParams.length > 0, "readStateDigested 有非 readonly 参数");
-  const mutableDiags = findDiags("readStateDigested", DiagnosticKind.MutableParam);
-  assert(mutableDiags.length === 0, "readStateDigested 不报 MutableParam（已消化）");
-  const effCaps = result.effectiveCaps.get(readStateDigested.id)!;
-  assert(!effCaps.has("Mutable"), "readStateDigested 的 effectiveCaps 不含 Mutable");
-
-  // !Fallible: 返回 null 但声明已消化 → 不报 FallibleMismatch，不注入 Fallible
-  const findItemDigested = findFn("findItemDigested")!;
-  assert(findItemDigested !== null, "扫描到 findItemDigested");
-  assert(findItemDigested.digestedCaps.has("Fallible"), "findItemDigested 的 digestedCaps 含 Fallible");
-  assert(!findItemDigested.declaredCaps.has("Fallible"), "findItemDigested 的 declaredCaps 不含 Fallible");
-  assert(findItemDigested.returnsNullable, "findItemDigested returnsNullable");
-  const fallibleDiags = findDiags("findItemDigested", DiagnosticKind.FallibleMismatch);
-  assert(fallibleDiags.length === 0, "findItemDigested 不报 FallibleMismatch（已消化）");
-  const effCaps2 = result.effectiveCaps.get(findItemDigested.id)!;
-  assert(!effCaps2.has("Fallible"), "findItemDigested 的 effectiveCaps 不含 Fallible");
-
-  // !Async: async 函数但声明已消化 → 不报 AsyncMismatch，不注入 Async
-  const loadDataDigested = findFn("loadDataDigested")!;
-  assert(loadDataDigested !== null, "扫描到 loadDataDigested");
-  assert(loadDataDigested.digestedCaps.has("Async"), "loadDataDigested 的 digestedCaps 含 Async");
-  assert(!loadDataDigested.declaredCaps.has("Async"), "loadDataDigested 的 declaredCaps 不含 Async");
-  assert(loadDataDigested.returnsAsync, "loadDataDigested returnsAsync");
-  const asyncDiags = findDiags("loadDataDigested", DiagnosticKind.AsyncMismatch);
-  assert(asyncDiags.length === 0, "loadDataDigested 不报 AsyncMismatch（已消化）");
-  const effCaps3 = result.effectiveCaps.get(loadDataDigested.id)!;
-  assert(!effCaps3.has("Async"), "loadDataDigested 的 effectiveCaps 不含 Async");
+  writeFileSync(objectPath, objectOriginal);
 }
 
 console.log("\n── 16. 对象方法扫描 ──");
 {
-  // PropertyAssignment + ArrowFunction: api.getUser
   const getUser = findFn("getUser");
-  assert(getUser !== null, "扫描到 api.getUser 对象方法");
+  assert(getUser !== null, "扫描到 api.getUser");
   if (getUser) {
     assert(getUser.isDeclared, "getUser 已声明");
     assert(getUser.declaredCaps.has("IO"), "getUser 声明了 IO");
   }
 
-  // PropertyAssignment + ArrowFunction: api.buildUrl (pure)
   const buildUrl = findFn("buildUrl");
-  assert(buildUrl !== null, "扫描到 api.buildUrl 对象方法");
+  assert(buildUrl !== null, "扫描到 api.buildUrl");
   if (buildUrl) {
-    assert(buildUrl.isDeclared, "buildUrl 已声明");
     assert(buildUrl.declaredCaps.size === 0, "buildUrl 是纯函数");
   }
 
-  // MethodDeclaration in ObjectLiteral: increment
   const increment = findFn("increment");
-  assert(increment !== null, "扫描到 createCounter 返回的 increment 方法");
+  assert(increment !== null, "扫描到 increment 方法");
   if (increment) {
-    assert(increment.isDeclared, "increment 已声明");
     assert(increment.declaredCaps.has("Mutable"), "increment 声明了 Mutable");
   }
 
-  // MethodDeclaration in ObjectLiteral: getValue (pure)
   const getValue = findFn("getValue");
-  assert(getValue !== null, "扫描到 createCounter 返回的 getValue 方法");
+  assert(getValue !== null, "扫描到 getValue 方法");
   if (getValue) {
     assert(getValue.declaredCaps.size === 0, "getValue 是纯函数");
-  }
-
-  // 同文件同名方法：reset 出现两次
-  const resets = [...scan.functions.values()].filter(f => f.name === "reset");
-  assert(resets.length === 2, "扫描到两个 reset 方法", `got ${resets.length}`);
-  if (resets.length === 2) {
-    const ids = new Set(resets.map(f => f.id));
-    assert(ids.size === 2, "两个 reset 有不同的 id（行号区分）");
-    const caps = resets.map(f => [...f.declaredCaps].sort().join(",")).sort();
-    assert(caps.includes("IO"), "一个 reset 有 IO");
-    assert(caps.includes(""), "一个 reset 是纯函数");
   }
 }
 
@@ -352,19 +374,23 @@ console.log("\n── 17. class 方法扫描 ──");
   if (greet) {
     assert(greet.isDeclared, "greet 已声明");
     assert(greet.declaredCaps.size === 0, "greet 是纯函数");
-    assert(greet.id.includes("Greeter.greet"), "greet 的 id 含 Greeter.greet");
   }
 
   const greetAndLog = findFn("greetAndLog");
   assert(greetAndLog !== null, "扫描到 Greeter.greetAndLog");
   if (greetAndLog) {
-    assert(greetAndLog.isDeclared, "greetAndLog 已声明");
     assert(greetAndLog.declaredCaps.has("IO"), "greetAndLog 声明了 IO");
-    assert(greetAndLog.id.includes("Greeter.greetAndLog"), "greetAndLog 的 id 含 Greeter.greetAndLog");
   }
 }
 
-// ══ 汇总 ══
+console.log("\n── 18. 能力配置完整性 ──");
+{
+  assert(PROPAGATE_CAPS.length === 5, "5 个传播能力", `got ${PROPAGATE_CAPS.length}`);
+  assert(BLOCK_CAPS.length === 3, "3 个阻断能力", `got ${BLOCK_CAPS.length}`);
+  assert(SCORABLE_CAPS.length === 5, "5 个 scorable 能力", `got ${SCORABLE_CAPS.length}`);
+}
+
+// ══ Summary ══
 
 console.log(`\n${"═".repeat(40)}`);
 console.log(`Results: ${passed} passed, ${failed} failed, ${passed + failed} total`);

@@ -1,32 +1,25 @@
 /**
  * 能力传播分析器
  *
- * 基于 ProjectScan 的完整能力图：
- * 1. 计算每个函数的「实际能力」（声明 + 自身特征 + 调用链传播）
- * 2. 检测违例：escalation、mismatch、absorbed、unregistered
+ * 1. effectiveCaps = declaredCaps ∪ autoDetected
+ * 2. propagatedCaps = effectiveCaps - block能力 - 被block的传播能力
+ * 3. 4 种诊断: missing_capability, undeclared, unregistered, implicit_capability
  */
 
-import { ALL_CAPABILITIES, ELIMINABILITY, type Capability } from "./capabilities.js";
+import {
+  CAPABILITY_DEFS, PROPAGATE_CAPS, BLOCK_PAIRS, ALL_CAPABILITIES,
+  type Capability,
+} from "./capabilities.js";
 import { BUILTIN_CAPABILITIES } from "./builtin.js";
 import type { FunctionInfo, ProjectScan } from "./scanner.js";
 
-// ── 诊断类型 ──
+// ── Diagnostics ──
 
 export enum DiagnosticKind {
-  /** 调用了需要更多能力的函数，且该能力不可 wrap */
-  Escalation = "escalation",
-  /** 返回类型含 Promise 但未声明 Async */
-  AsyncMismatch = "async_mismatch",
-  /** 返回类型含 null/undefined 但未声明 Fallible */
-  FallibleMismatch = "fallible_mismatch",
-  /** 函数参数含有非 readonly 引用类型，可能修改调用方状态 */
-  MutableParam = "mutable_param",
-  /** 调用了 wrappable 能力的函数但未声明（suggestion） */
-  Absorbed = "absorbed",
-  /** 调用了未注册的函数 */
-  Unregistered = "unregistered",
-  /** 未声明能力 */
+  MissingCapability = "missing_capability",
   Undeclared = "undeclared",
+  Unregistered = "unregistered",
+  ImplicitCapability = "implicit_capability",
 }
 
 export interface Diagnostic {
@@ -36,179 +29,166 @@ export interface Diagnostic {
   filePath: string;
   line: number;
   message: string;
-  /** escalation/absorbed 时：被调函数名 */
   callee?: string;
-  /** escalation 时：缺失的能力 */
   missingCaps?: Capability[];
-  /** absorbed 时：被吸收的能力 */
-  absorbedCaps?: Capability[];
 }
-
-// ── 分析结果 ──
 
 export interface AnalysisResult {
   diagnostics: Diagnostic[];
-  /** 每个函数的实际能力（声明 + 推断） */
   effectiveCaps: Map<string, Set<Capability>>;
+  propagatedCaps: Map<string, Set<Capability>>;
 }
 
-// ── 分析器 ──
+// ── Analysis ──
 
 export function analyze(scan: ProjectScan): AnalysisResult {
   const diagnostics: Diagnostic[] = [];
   const effectiveCaps = new Map<string, Set<Capability>>();
+  const propagatedCaps = new Map<string, Set<Capability>>();
 
-  // 为每个函数计算 effective caps（声明 + 自身特征）
+  // Phase 1: compute effectiveCaps for each function
   for (const [id, fn] of scan.functions) {
     const caps = new Set(fn.declaredCaps);
-    if (fn.returnsAsync && fn.isDeclared && !caps.has("Async") && !fn.digestedCaps.has("Async")) {
-      caps.add("Async");
-      diagnostics.push({
-        kind: DiagnosticKind.AsyncMismatch,
-        functionId: id, functionName: fn.name,
-        filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 返回类型包含 Promise/AsyncIterable，已自动标记为 Async。如不需要此标记，请将异步操作在函数内部消化（如 task/handle 模式），使返回类型不含 Promise。`,
-      });
+
+    // Auto-detection for declared functions
+    if (fn.isDeclared) {
+      if (fn.returnsAsync && !caps.has("Async")) {
+        caps.add("Async");
+        diagnostics.push({
+          kind: DiagnosticKind.ImplicitCapability,
+          functionId: id, functionName: fn.name,
+          filePath: fn.filePath, line: fn.line,
+          message: `'${fn.name}' 返回类型包含 Promise/AsyncIterable，自动标记 Async。`,
+        });
+      }
+      if (fn.returnsNullable && !caps.has("Fallible")) {
+        caps.add("Fallible");
+        diagnostics.push({
+          kind: DiagnosticKind.ImplicitCapability,
+          functionId: id, functionName: fn.name,
+          filePath: fn.filePath, line: fn.line,
+          message: `'${fn.name}' 返回类型包含 null/undefined，自动标记 Fallible。`,
+        });
+      }
+      if (fn.mutableParams.length > 0 && !caps.has("Mutable")) {
+        caps.add("Mutable");
+        diagnostics.push({
+          kind: DiagnosticKind.ImplicitCapability,
+          functionId: id, functionName: fn.name,
+          filePath: fn.filePath, line: fn.line,
+          message: `'${fn.name}' 参数 [${fn.mutableParams.join(", ")}] 为非 readonly 引用类型，自动标记 Mutable。`,
+        });
+      }
     }
-    if (fn.returnsNullable && fn.isDeclared && !caps.has("Fallible") && !fn.digestedCaps.has("Fallible")) {
-      caps.add("Fallible");
-      diagnostics.push({
-        kind: DiagnosticKind.FallibleMismatch,
-        functionId: id, functionName: fn.name,
-        filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 返回类型包含 null/undefined，已自动标记为 Fallible。如不需要此标记，请将 null/undefined 返回改为显式的错误结构体（如 { success: false, error: "reason" }），用确定的类型替代空值。`,
-      });
-    }
+
     if (!fn.isDeclared) {
       diagnostics.push({
         kind: DiagnosticKind.Undeclared,
         functionId: id, functionName: fn.name,
         filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 未声明能力，被视为全能力函数。请添加能力后缀（如 fetchUser_IO_Async）或 @capability 标注（纯函数用空 @capability）。`,
+        message: `'${fn.name}' 未声明能力，按全能力处理。添加 @capability 标注（纯函数用空 @capability）。`,
       });
     }
-    if (fn.isDeclared && !caps.has("Mutable") && !fn.digestedCaps.has("Mutable") && fn.mutableParams.length > 0) {
-      caps.add("Mutable");
-      diagnostics.push({
-        kind: DiagnosticKind.MutableParam,
-        functionId: id, functionName: fn.name,
-        filePath: fn.filePath, line: fn.line,
-        message: `'${fn.name}' 的参数 [${fn.mutableParams.join(", ")}] 是非 readonly 引用类型，已自动标记为 Mutable。将参数改为 readonly 可移除此标记并降低分数。`,
-      });
-    }
+
     effectiveCaps.set(id, caps);
   }
 
-  // 检查每个函数的调用
+  // Phase 2: compute propagatedCaps
+  for (const [id, caps] of effectiveCaps) {
+    const propagated = new Set<Capability>();
+    for (const c of caps) {
+      if (CAPABILITY_DEFS[c].kind === "block") continue;
+      // Check if this propagate cap is blocked
+      const blocker = BLOCK_PAIRS.get(c);
+      if (blocker && caps.has(blocker)) continue;
+      propagated.add(c);
+    }
+    propagatedCaps.set(id, propagated);
+  }
+
+  // Phase 3: check calls
   for (const [id, fn] of scan.functions) {
-    const callerCaps = effectiveCaps.get(id)!;
+    const callerEffective = effectiveCaps.get(id)!;
 
-    // 已解析的调用
+    // Resolved calls
     for (const call of fn.resolvedCalls) {
-      const calleeId = call.target;
-      const calleeCaps = effectiveCaps.get(calleeId);
-      if (!calleeCaps) continue;
-
-      const calleeFn = scan.functions.get(calleeId)!;
-      checkCall(diagnostics, fn, callerCaps, call.line, calleeFn.name, calleeCaps);
+      const calleePropagated = propagatedCaps.get(call.target);
+      if (!calleePropagated) continue;
+      const calleeFn = scan.functions.get(call.target)!;
+      checkCall(diagnostics, fn, callerEffective, call.line, calleeFn.name, calleePropagated);
     }
 
-    // 未解析的调用：查内置表
+    // Unresolved calls
     const reportedUnresolved = new Set<string>();
     for (const call of fn.unresolvedCalls) {
       const calleeName = call.target;
+      const qualifiedName = call.qualifiedName;
+
+      // 1. External cap file (match by bare name)
       const extEntry = scan.externalCaps.get(calleeName);
       if (extEntry) {
         const calleeCaps = new Set<Capability>(extEntry.caps);
-        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, calleeCaps);
+        checkCall(diagnostics, fn, callerEffective, call.line, calleeName, calleeCaps);
+        continue;
+      }
+
+      // 2. Builtin table (match by qualifiedName first, then bare name)
+      let builtinCaps: Capability[] | undefined;
+      if (qualifiedName && qualifiedName in BUILTIN_CAPABILITIES) {
+        builtinCaps = BUILTIN_CAPABILITIES[qualifiedName];
       } else if (calleeName in BUILTIN_CAPABILITIES) {
-        const calleeCaps = new Set<Capability>(BUILTIN_CAPABILITIES[calleeName] as Capability[]);
-        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, calleeCaps);
-      } else if (!reportedUnresolved.has(calleeName)) {
+        builtinCaps = BUILTIN_CAPABILITIES[calleeName];
+      }
+      if (builtinCaps !== undefined) {
+        checkCall(diagnostics, fn, callerEffective, call.line, calleeName, new Set(builtinCaps));
+        continue;
+      }
+
+      // 3. Unregistered
+      if (!reportedUnresolved.has(calleeName)) {
         reportedUnresolved.add(calleeName);
-        checkCall(diagnostics, fn, callerCaps, call.line, calleeName, new Set(ALL_CAPABILITIES));
+        checkCall(diagnostics, fn, callerEffective, call.line, calleeName, new Set(PROPAGATE_CAPS));
         diagnostics.push({
           kind: DiagnosticKind.Unregistered,
           functionId: id, functionName: fn.name,
           filePath: fn.filePath, line: call.line,
           callee: calleeName,
-          message: `'${fn.name}' 调用了未注册函数 '${calleeName}'，无法验证能力。请确认该函数的能力声明，或将其添加到内置声明表。`,
+          message: `'${fn.name}' 调用了未注册函数 '${calleeName}'，按全能力处理。`,
         });
       }
     }
   }
 
-  return { diagnostics, effectiveCaps };
+  return { diagnostics, effectiveCaps, propagatedCaps };
 }
 
 function checkCall(
   diagnostics: Diagnostic[],
   caller: FunctionInfo,
-  callerCaps: Set<Capability>,
+  callerEffective: Set<Capability>,
   callLine: number,
   calleeName: string,
   calleeCaps: Set<Capability>,
 ) {
   const missing: Capability[] = [];
-  const absorbed: Capability[] = [];
 
   for (const cap of calleeCaps) {
-    if (!callerCaps.has(cap)) {
-      if (ELIMINABILITY[cap] === "wrappable") {
-        absorbed.push(cap);
-      } else {
-        missing.push(cap);
-      }
-    }
+    if (CAPABILITY_DEFS[cap].kind !== "propagate") continue;
+    if (callerEffective.has(cap)) continue;
+    // Check if caller has the corresponding block capability
+    const blocker = BLOCK_PAIRS.get(cap);
+    if (blocker && callerEffective.has(blocker)) continue;
+    missing.push(cap);
   }
 
   if (missing.length > 0) {
     diagnostics.push({
-      kind: DiagnosticKind.Escalation,
+      kind: DiagnosticKind.MissingCapability,
       functionId: caller.id, functionName: caller.name,
       filePath: caller.filePath, line: callLine,
       callee: calleeName,
       missingCaps: missing,
-      message: `'${caller.name}' 缺少能力 [${missing.join(", ")}]，但调用了需要 [${[...calleeCaps].join(", ")}] 的 '${calleeName}'。`,
+      message: `'${caller.name}' 缺少能力 [${missing.join(", ")}]，调用了 '${calleeName}'。`,
     });
-  }
-
-  if (absorbed.length > 0 && missing.length === 0) {
-    const hasFallible = absorbed.includes("Fallible" as Capability);
-    const hasAsync = absorbed.includes("Async" as Capability);
-    const hasMutable = absorbed.includes("Mutable" as Capability);
-    
-    if (hasFallible) {
-      diagnostics.push({
-        kind: DiagnosticKind.Absorbed,
-        functionId: caller.id, functionName: caller.name,
-        filePath: caller.filePath, line: callLine,
-        callee: calleeName,
-        absorbedCaps: ["Fallible" as Capability],
-        message: `'${caller.name}' 调用了 Fallible 函数 '${calleeName}'，但未声明 Fallible。若失败未被 try-catch/默认值处理，请补充 Fallible 声明；否则可将 '${calleeName}' 的空返回改为显式错误结构体（如 { success: false, error: "reason" }）。`,
-      });
-    }
-    
-    if (hasAsync) {
-      diagnostics.push({
-        kind: DiagnosticKind.Absorbed,
-        functionId: caller.id, functionName: caller.name,
-        filePath: caller.filePath, line: callLine,
-        callee: calleeName,
-        absorbedCaps: ["Async" as Capability],
-        message: `'${caller.name}' 调用了 Async 函数 '${calleeName}'，但未声明 Async。若调用方需要 await 本函数结果，请补充 Async 声明；否则确认已通过 task/handle 或 fire-and-forget+错误处理 模式消化了异步操作。`,
-      });
-    }
-
-    if (hasMutable) {
-      diagnostics.push({
-        kind: DiagnosticKind.Absorbed,
-        functionId: caller.id, functionName: caller.name,
-        filePath: caller.filePath, line: callLine,
-        callee: calleeName,
-        absorbedCaps: ["Mutable" as Capability],
-        message: `'${caller.name}' 调用了 Mutable 函数 '${calleeName}'，但未声明 Mutable。若传入的是局部创建的对象，变异已被消化，无需声明；否则请补充 Mutable 声明。`,
-      });
-    }
   }
 }

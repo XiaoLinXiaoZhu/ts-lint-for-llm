@@ -2,157 +2,71 @@
 /**
  * capability-lint CLI
  *
- * Capability-based effect tracking for TypeScript projects.
- * Designed for LLM agents — JSON output is the default.
+ * 固定 JSON 输出，支持 --summary / --hint / --fix / --dry-run
  */
 
 import { resolve, dirname, relative } from "node:path";
-import { existsSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { Project } from "ts-morph";
 import { scanProject } from "./scanner.js";
-import { analyze } from "./analyzer.js";
+import { analyze, DiagnosticKind } from "./analyzer.js";
 import { scoreLooseness } from "./looseness.js";
-import { computeScores, formatPretty, formatJSON, formatLLM } from "./reporter.js";
+import { computeScores, generateTips, formatJSON } from "./reporter.js";
 import { applyFixes } from "./fixer.js";
-
-// ── JSON output schema（嵌入 --help，供 AI agent 了解如何用 jq 取数据）──
-
-const OUTPUT_SCHEMA = `{
-  "diagnostics": [{
-    "kind": "escalation | async_mismatch | fallible_mismatch | absorbed | unregistered | undeclared",
-    "functionName": "string",
-    "filePath": "string (relative)",
-    "line": "number",
-    "message": "string",
-    "callee?": "string",
-    "missingCaps?": ["IO", "Mutable", "Impure"],
-    "absorbedCaps?": ["Fallible", "Async"]
-  }],
-  "functions": [{
-    "name": "string",
-    "filePath": "string (relative)",
-    "line": "number",
-    "caps": ["IO", "Async", ...],
-    "isDeclared": "boolean",
-    "weightedStatements": "number",
-    "score": "number"
-  }],
-  "scores": {
-    "totalCap": "number (lower is better)",
-    "totalLoose": "number (lower is better)",
-    "totalFunctions": "number",
-    "totalPure": "number",
-    "totalUndeclared": "number",
-    "capScores": { "IO": "number", "Async": "number", ... },
-    "looseByType": { "any": { "count": "number", "penalty": "number" }, ... },
-    "topFunctions": [{ "name": "string", "score": "number", ... }],
-    "fileScores": [{ "filePath": "string", "capScore": "number", "looseScore": "number", ... }],
-    "tips": ["string"]
-  }
-}`;
 
 const HELP = `capability-lint — Capability-based effect tracking for TypeScript
 
 Usage:
-  capability-lint [options] [file.ts | dir/ | tsconfig.json]
-
-  Positional argument is a .ts file, directory, or tsconfig.json.
-  If a .ts file is given, the project is loaded from the nearest tsconfig.json,
-  but only diagnostics for that file are shown.
-  If a directory is given, tsconfig.json in that directory is used.
-  Default: tsconfig.json in the current directory.
+  capability-lint [file.ts | dir/ ...] [options]
 
 Options:
-  --json       JSON output (default) — pipe to jq for structured queries
-  --llm        LLM-friendly Markdown output
-  --pretty     Human-readable terminal output
-  --fix        Auto-fix @capability declarations (add missing, remove excess)
-  --dry-run    Preview --fix changes without writing files (requires --fix)
-  --help       Show this help
-  --version    Show version
-
-JSON output schema:
-${OUTPUT_SCHEMA}
-
-Examples:
-  capability-lint src/                         # scan project, JSON output
-  capability-lint src/api.ts                   # single file diagnostics
-  capability-lint --fix --dry-run src/         # preview fixes
-  capability-lint src/ | jq '.scores.totalCap' # query total capability burden
-  capability-lint src/ | jq '[.diagnostics[] | select(.kind == "escalation")]'
+  --tsconfig <path>  Specify tsconfig.json (default: cwd/tsconfig.json)
+  --fix              Auto-fix @capability declarations
+  --dry-run          Preview --fix changes (requires --fix)
+  --summary          Only output scores (no diagnostics/functions)
+  --hint <keyword>   Filter optimization tips by keyword
+  --help             Show help
+  --version          Show version
 
 Exit codes:
-  0  No errors (absorbed warnings are OK)
-  1  Errors found (escalation, mismatch, undeclared, unregistered)
-
-Capability detection rules:
-  IO        Declared by user or propagated via call chain (non-wrappable)
-  Fallible  Auto-detected from return type containing null/undefined
-  Mutable   Auto-detected from non-readonly reference type parameters
-            (e.g. items: string[] triggers Mutable; items: readonly string[] does not)
-            Local push/sort/splice does NOT trigger Mutable — only parameter types matter
-            Fix: add readonly to params that aren't modified → removes Mutable → lowers score
-  Async     Auto-detected from return type containing Promise/AsyncIterable
-  Impure    Declared by user or propagated via call chain (non-wrappable)
-
-Workflow tip:
-  Every change should be verified by score diff. Do NOT assume a refactor lowers the score.
-  1. Run capability-lint, note totalCap + totalLoose as baseline
-  2. Make a change, run again, compare scores
-  3. Score dropped → git add (stage the win)
-  4. Score unchanged or rose → git checkout (revert, the change was ineffective)
-  Splitting a function only helps if the extracted part has FEWER capabilities.
-  Moving code between functions without reducing capabilities per function changes nothing.
+  0  No error-level diagnostics
+  1  Error-level diagnostics found
 `;
 
-// ── 参数解析 ──
+// ── Arg parsing ──
 
 const args = process.argv.slice(2);
-const flags = new Set(args.filter(a => a.startsWith("--")));
-const positional = args.filter(a => !a.startsWith("--"));
+const flags: Record<string, string | boolean> = {};
+const positional: string[] = [];
 
-if (flags.has("--help")) {
-  console.log(HELP);
-  process.exit(0);
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "--help") { console.log(HELP); process.exit(0); }
+  if (a === "--version") {
+    try {
+      const pkgPath = new URL("../package.json", import.meta.url);
+      console.log(JSON.parse(readFileSync(pkgPath, "utf8")).version);
+    } catch { console.log("unknown"); }
+    process.exit(0);
+  }
+  if (a === "--tsconfig" && i + 1 < args.length) { flags.tsconfig = args[++i]; continue; }
+  if (a === "--hint" && i + 1 < args.length) { flags.hint = args[++i]; continue; }
+  if (a === "--fix") { flags.fix = true; continue; }
+  if (a === "--dry-run") { flags.dryRun = true; continue; }
+  if (a === "--summary") { flags.summary = true; continue; }
+  if (!a.startsWith("--")) { positional.push(a); continue; }
 }
 
-if (flags.has("--version")) {
-  try {
-    const pkgPath = new URL("../package.json", import.meta.url);
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    console.log(pkg.version);
-  } catch {
-    console.log("unknown");
-  }
-  process.exit(0);
-}
+const doFix = !!flags.fix;
+const dryRun = !!flags.dryRun;
+const summaryMode = !!flags.summary;
+const hintKeyword = typeof flags.hint === "string" ? flags.hint : undefined;
 
-const format = flags.has("--pretty") ? "pretty" : flags.has("--llm") ? "llm" : "json";
-const doFix = flags.has("--fix");
-const dryRun = flags.has("--dry-run");
+// ── Find tsconfig ──
 
-// ── 找 tsconfig ──
-
-let input = positional[0] ?? "tsconfig.json";
-input = resolve(input);
-
-let tsConfigPath!: string;
-let focusFile: string | null = null;
-
-if (input.endsWith(".json")) {
-  tsConfigPath = input;
-} else if (statSync(input, { throwIfNoEntry: false })?.isDirectory()) {
-  tsConfigPath = resolve(input, "tsconfig.json");
-} else if (input.endsWith(".ts")) {
-  // 单文件：向上查找 tsconfig.json，聚焦该文件的诊断
-  let dir = dirname(input);
-  while (dir !== dirname(dir)) {
-    const candidate = resolve(dir, "tsconfig.json");
-    if (existsSync(candidate)) { tsConfigPath = candidate; break; }
-    dir = dirname(dir);
-  }
-  tsConfigPath ??= resolve("tsconfig.json");
-  focusFile = input;
+let tsConfigPath: string;
+if (flags.tsconfig) {
+  tsConfigPath = resolve(flags.tsconfig as string);
 } else {
   tsConfigPath = resolve("tsconfig.json");
 }
@@ -164,35 +78,54 @@ if (!existsSync(tsConfigPath)) {
 
 const cwd = dirname(tsConfigPath);
 
-// ── 扫描 & 分析 ──
+// ── Resolve focus paths ──
 
-console.error(`[capability-lint] Scanning: ${tsConfigPath}`);
-const t0 = Date.now();
+const focusPaths: string[] = positional.map(p => resolve(p));
 
-const scan = scanProject(tsConfigPath);
-const t1 = Date.now();
-console.error(`[capability-lint] Scanned ${scan.functions.size} functions in ${t1 - t0}ms`);
-
-const result = analyze(scan);
-
-// Looseness 评分
-const project = new Project({ tsConfigFilePath: tsConfigPath });
-const loosenessResults = new Map<string, ReturnType<typeof scoreLooseness>>();
-for (const sf of project.getSourceFiles()) {
-  if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
-  loosenessResults.set(sf.getFilePath(), scoreLooseness(sf));
+function isInScope(filePath: string): boolean {
+  if (focusPaths.length === 0) return true;
+  return focusPaths.some(fp => {
+    const stat = statSync(fp, { throwIfNoEntry: false });
+    if (stat?.isDirectory()) return filePath.startsWith(fp);
+    return filePath === fp;
+  });
 }
 
-const scores = computeScores(scan, result, loosenessResults);
-const t2 = Date.now();
-console.error(`[capability-lint] Analyzed in ${t2 - t1}ms, ${result.diagnostics.length} diagnostics`);
+// ── Scan & Analyze ──
 
-// ── --fix / --dry-run ──
+function runPipeline() {
+  console.error(`[capability-lint] Scanning: ${tsConfigPath}`);
+  const t0 = Date.now();
+
+  const scan = scanProject(tsConfigPath);
+  const t1 = Date.now();
+  console.error(`[capability-lint] Scanned ${scan.functions.size} functions in ${t1 - t0}ms`);
+
+  const result = analyze(scan);
+
+  // Looseness
+  const project = new Project({ tsConfigFilePath: tsConfigPath });
+  const loosenessResults = new Map<string, ReturnType<typeof scoreLooseness>>();
+  for (const sf of project.getSourceFiles()) {
+    if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
+    loosenessResults.set(sf.getFilePath(), scoreLooseness(sf));
+  }
+
+  const scores = computeScores(scan, result, loosenessResults);
+  const t2 = Date.now();
+  console.error(`[capability-lint] Analyzed in ${t2 - t1}ms, ${result.diagnostics.length} diagnostics`);
+
+  return { scan, result, scores, loosenessResults };
+}
+
+let { scan, result, scores } = runPipeline();
+
+// ── Fix ──
 
 if (doFix) {
   const fixResult = applyFixes(scan, result, dryRun);
   if (dryRun) {
-    console.error(`[capability-lint] Dry run: ${fixResult.changes.length} changes in ${new Set(fixResult.changes.map(c => c.filePath)).size} files (+${fixResult.capsAdded} caps, -${fixResult.capsRemoved} caps)`);
+    console.error(`[capability-lint] Dry run: ${fixResult.changes.length} changes (+${fixResult.capsAdded} -${fixResult.capsRemoved})`);
     for (const c of fixResult.changes) {
       const rel = relative(cwd, c.filePath);
       const parts: string[] = [];
@@ -200,30 +133,40 @@ if (doFix) {
       if (c.removed.length) parts.push(`-${c.removed.join(",")}`);
       console.error(`  ${rel}:${c.line} ${c.functionName} ${parts.join(" ")}`);
     }
+  } else if (fixResult.filesModified > 0) {
+    console.error(`[capability-lint] Fixed ${fixResult.filesModified} files (+${fixResult.capsAdded} -${fixResult.capsRemoved}), re-scanning...`);
+    ({ scan, result, scores } = runPipeline());
   } else {
-    console.error(`[capability-lint] Fixed ${fixResult.filesModified} files (+${fixResult.capsAdded} caps, -${fixResult.capsRemoved} caps)`);
+    console.error(`[capability-lint] No fixes needed`);
   }
 }
 
-// ── 聚焦单文件 ──
+// ── Tips ──
+
+if (hintKeyword) {
+  scores.tips = generateTips(scores, cwd, hintKeyword);
+} else {
+  // No --hint → no tips in output
+}
+
+// ── Filter scope ──
 
 let diagnostics = result.diagnostics;
-if (focusFile) {
-  const fp = resolve(focusFile);
-  diagnostics = diagnostics.filter(d => d.filePath === fp || d.filePath.includes(fp));
+if (focusPaths.length > 0) {
+  diagnostics = diagnostics.filter(d => isInScope(d.filePath));
 }
-
 const filteredResult = { ...result, diagnostics };
 
-// ── 输出 ──
+// ── Output ──
 
-if (format === "json") {
-  console.log(formatJSON(filteredResult, scores, cwd));
-} else if (format === "llm") {
-  console.log(formatLLM(filteredResult, scores, cwd));
-} else {
-  console.log(formatPretty(filteredResult, scores, cwd));
-}
+console.log(formatJSON(filteredResult, scores, cwd, { summary: summaryMode }));
 
-const hasErrors = diagnostics.some(d => d.kind !== "absorbed" && d.kind !== "mutable_param");
+// ── Exit code ──
+
+const errorKinds = new Set([
+  DiagnosticKind.MissingCapability,
+  DiagnosticKind.Undeclared,
+  DiagnosticKind.Unregistered,
+]);
+const hasErrors = diagnostics.some(d => errorKinds.has(d.kind));
 process.exitCode = hasErrors ? 1 : 0;
