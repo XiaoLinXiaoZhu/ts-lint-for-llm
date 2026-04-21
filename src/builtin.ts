@@ -43,6 +43,7 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   "Date.getHours": [], "Date.getMinutes": [], "Date.getSeconds": [],
   "Date.toISOString": [], "Date.toTimeString": [], "Date.toDateString": [],
   "Date.toLocaleDateString": [], "Date.toLocaleTimeString": [], "Date.toLocaleString": [],
+  "DateConstructor.now": ["Impure"],
 
   // ── Array（读取类）──
   "Array.map": [], "Array.filter": [], "Array.reduce": [], "Array.reduceRight": [],
@@ -53,6 +54,14 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   "Array.isArray": [], "Array.of": [], "Array.from": [],
   "Array.indexOf": [], "Array.lastIndexOf": [], "Array.includes": [],
   "Array.join": [], "Array.slice": [], "Array.at": [], "Array.concat": [],
+  "ReadonlyArray.map": [], "ReadonlyArray.filter": [], "ReadonlyArray.reduce": [],
+  "ReadonlyArray.reduceRight": [], "ReadonlyArray.find": [], "ReadonlyArray.findIndex": [],
+  "ReadonlyArray.some": [], "ReadonlyArray.every": [], "ReadonlyArray.flat": [],
+  "ReadonlyArray.flatMap": [], "ReadonlyArray.forEach": [], "ReadonlyArray.join": [],
+  "ReadonlyArray.slice": [], "ReadonlyArray.indexOf": [], "ReadonlyArray.lastIndexOf": [],
+  "ReadonlyArray.includes": [], "ReadonlyArray.at": [], "ReadonlyArray.concat": [],
+  "ReadonlyArray.entries": [], "ReadonlyArray.keys": [], "ReadonlyArray.values": [],
+  "ReadonlyArray.findLast": [], "ReadonlyArray.findLastIndex": [],
 
   // ── Array（变异类）── 局部变异不算 Mutable
   "Array.push": [], "Array.pop": [], "Array.shift": [], "Array.unshift": [],
@@ -63,10 +72,14 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   "Object.assign": [], "Object.freeze": [],
   "Object.keys": [], "Object.values": [], "Object.entries": [],
   "Object.hasOwnProperty": [], "Object.isPrototypeOf": [], "Object.propertyIsEnumerable": [],
+  "ObjectConstructor.keys": [], "ObjectConstructor.values": [], "ObjectConstructor.entries": [],
+  "ObjectConstructor.assign": [], "ObjectConstructor.freeze": [],
 
   // ── Map / Set ──
   "Map.has": [], "Map.get": [], "Map.set": [], "Map.delete": [], "Map.clear": [],
   "Set.has": [], "Set.add": [], "Set.delete": [], "Set.clear": [],
+  "ReadonlyMap.has": [], "ReadonlyMap.get": [],
+  "ReadonlySet.has": [],
 
   // ── Promise ──
   "Promise.then": [], "Promise.catch": [], "Promise.finally": [],
@@ -100,10 +113,17 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   "Body.json": ["Async", "Fallible"], "Body.text": ["Async"],
   "Body.blob": ["Async"], "Body.arrayBuffer": ["Async"],
   "Response.clone": [],
+  "global.BufferConstructor.from": [],
 
   // ── Stream ──
+  "ReadableStream.getReader": [],
   "ReadableStreamDefaultReader.read": ["Async"],
   "WritableStreamDefaultWriter.close": [],
+  "ReadableStreamDefaultController.enqueue": [], "ReadableStreamDefaultController.close": [],
+
+  // ── URLSearchParams ──
+  "URLSearchParams.get": [], "URLSearchParams.set": [], "URLSearchParams.has": [],
+  "URLSearchParams.append": [], "URLSearchParams.delete": [], "URLSearchParams.toString": [],
 
   // ── AbortSignal ──
   "AbortSignal.timeout": [], "AbortSignal.any": [], "AbortController.abort": [],
@@ -131,7 +151,33 @@ export const BUILTIN_CAPABILITIES: Record<string, Capability[]> = {
   // ── EventEmitter ──
   "EventEmitter.on": [], "EventEmitter.off": [], "EventEmitter.once": [],
   "EventEmitter.emit": ["IO"],
+  "NCWebsocketBase.on": [],
 
   // ── Misc ──
   "AsyncIterator.next": ["Async"],
+
+  // ── Bare-name fallbacks (when qualifiedName unavailable) ──
+  "set": [], "get": [], "has": [], "delete": [], "clear": [], "add": [],
+  "map": [], "filter": [], "reduce": [], "find": [], "some": [], "every": [],
+  "forEach": [], "flat": [], "flatMap": [], "includes": [], "indexOf": [],
+  "keys": [], "values": [], "entries": [],
+  "join": [], "slice": [], "concat": [], "at": [],
+  "push": [], "pop": [], "shift": [], "unshift": [], "splice": [], "sort": [], "reverse": [],
+  "assign": [], "freeze": [],
+  "split": [], "trim": [], "replace": [], "replaceAll": [],
+  "startsWith": [], "endsWith": [], "match": [], "search": [],
+  "toLowerCase": [], "toUpperCase": [],
+  "test": [], "exec": [],
+  "toFixed": [], "toString": [],
+  "then": [], "catch": [], "finally": [],
+  "parse": ["Fallible"], "stringify": [],
+  "log": ["IO"], "warn": ["IO"], "error": ["IO"], "info": ["IO"], "debug": ["IO"],
+  "random": ["Impure"], "now": ["Impure"],
+  "json": ["Async", "Fallible"], "text": ["Async"],
+  "blob": ["Async"], "arrayBuffer": ["Async"],
+  "encode": [], "decode": [],
+  "getReader": [],
+  "enqueue": [], "close": [],
+  "on": [], "off": [], "once": [], "emit": ["IO"],
+  "from": [],
 };
