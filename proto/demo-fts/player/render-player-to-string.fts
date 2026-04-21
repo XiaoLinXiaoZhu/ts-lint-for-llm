@@ -1,3 +1,4 @@
+/** @capability */
 (state: Readonly<ImmutablePlayerState>, windowSize: number): string => {
   const lines = buildVisibleLyricWindow(state, windowSize);
   const header = `♪ ${formatSecondsToMmSs(state.currentTime)} ${state.playing ? "▶" : "⏸"}`;

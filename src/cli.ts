@@ -217,6 +217,24 @@ if (doFix) {
     }
   } else if (fixResult.filesModified > 0) {
     console.error(`[capability-lint] Fixed ${fixResult.filesModified} files (+${fixResult.capsAdded} -${fixResult.capsRemoved}), re-scanning...`);
+    // If .fts files were modified, recompile their directories before re-scanning
+    const ftsDirs = new Set<string>();
+    for (const c of fixResult.changes) {
+      if (c.filePath.endsWith(".fts") && !c.filePath.endsWith(".type.fts")) {
+        ftsDirs.add(dirname(c.filePath));
+      }
+    }
+    if (ftsDirs.size > 0) {
+      const { execSync } = await import("node:child_process");
+      for (const dir of ftsDirs) {
+        try {
+          execSync(`bun ${resolve(dirname(import.meta.url.replace("file://", "")), "fts-compile.ts")} ${dir}`, { stdio: "pipe" });
+          console.error(`[capability-lint] Recompiled fts: ${relative(cwd, dir)}/`);
+        } catch {
+          console.error(`[capability-lint] Failed to recompile fts: ${relative(cwd, dir)}/`);
+        }
+      }
+    }
     ({ scan, result, scores } = runPipeline());
   } else {
     console.error(`[capability-lint] No fixes needed`);

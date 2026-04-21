@@ -1,2 +1,3 @@
+/** @capability */
 (lyrics: readonly LyricLineWithTimestamp[]): ImmutablePlayerState =>
   ({ lyrics, currentTime: 0, playing: false, activeLine: -1 })

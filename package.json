@@ -6,7 +6,7 @@
   "main": "dist/cli.js",
   "bin": {
     "capability-lint": "dist/cli.js",
-    "capability-report": "dist/cli.js"
+    "fts-compile": "dist/fts-compile.js"
   },
   "scripts": {
     "build": "tsc",

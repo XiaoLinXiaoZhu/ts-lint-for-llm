@@ -6,6 +6,8 @@
  * - missing_capability 中不可阻断能力(IO/Impure) → 自动补
  * - missing_capability 中可阻断能力(Fallible/Async/Mutable) → 不补，保留诊断
  * - 多余声明 → 移除（有未解析调用时不移除）
+ *
+ * 对 .fts 文件：修改首行 @capability 声明
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -28,6 +30,53 @@ export interface FixResult {
   capsRemoved: number;
   changes: FixChange[];
 }
+
+// ── .fts file fix ──
+
+function applyFtsFix(
+  filePath: string,
+  fn: FunctionInfo,
+  targetCaps: Set<Capability> | null,
+  isUndeclared: boolean,
+  dryRun?: boolean,
+): { change: FixChange; modified: boolean } | null {
+  const content = readFileSync(filePath, "utf8");
+  const lines = content.split("\n");
+  const firstLine = lines[0]?.trim() ?? "";
+  const hasCapLine = firstLine.startsWith("/**") && firstLine.includes("@capability");
+
+  if (isUndeclared) {
+    const newContent = "/** @capability */\n" + content;
+    if (!dryRun) writeFileSync(filePath, newContent);
+    return { change: { filePath, functionName: fn.name, line: 1, added: [], removed: [] }, modified: true };
+  }
+
+  if (!targetCaps) return null;
+
+  const capsSorted = ALL_CAPABILITIES.filter(c => targetCaps.has(c));
+  const capText = capsSorted.length > 0 ? " " + capsSorted.join(" ") + " " : " ";
+  const newCapLine = `/** @capability${capText}*/`;
+
+  if (hasCapLine) {
+    if (lines[0].trim() === newCapLine) return null;
+    lines[0] = newCapLine;
+  } else if (capsSorted.length > 0) {
+    lines.unshift(newCapLine);
+  } else {
+    return null;
+  }
+
+  if (!dryRun) writeFileSync(filePath, lines.join("\n"));
+
+  const added = capsSorted.filter(c => !fn.declaredCaps.has(c as Capability)) as Capability[];
+  const removed = [...fn.declaredCaps].filter(c => !targetCaps.has(c));
+  return {
+    change: { filePath, functionName: fn.name, line: 1, added, removed },
+    modified: true,
+  };
+}
+
+// ── Main fix logic ──
 
 export function applyFixes(
   scan: ProjectScan,
@@ -120,6 +169,21 @@ export function applyFixes(
   const changes: FixChange[] = [];
 
   for (const [filePath, edits] of fileEdits) {
+    // .fts files: edit first-line capability comment instead of JSDoc
+    if (filePath.endsWith(".fts") && !filePath.endsWith(".type.fts")) {
+      for (const { fn, targetCaps, isUndeclared } of edits) {
+        const result = applyFtsFix(filePath, fn, targetCaps, isUndeclared, dryRun);
+        if (result) {
+          changes.push(result.change);
+          capsAdded += result.change.added.length;
+          capsRemoved += result.change.removed.length;
+          if (result.modified) filesModified++;
+        }
+      }
+      continue;
+    }
+
+    // Standard .ts files: edit JSDoc @capability
     let lines = readFileSync(filePath, "utf8").split("\n");
     let modified = false;
 

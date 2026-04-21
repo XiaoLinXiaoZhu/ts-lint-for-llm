@@ -11,7 +11,7 @@ import {
   type FunctionExpression, type MethodDeclaration,
   type CallExpression, type ParameterDeclaration,
 } from "ts-morph";
-import { resolve } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { loadCapFiles, type ExternalCapEntry } from "./cap-file.js";
 import { VALID_CAPABILITY_NAMES, PROPAGATE_CAPS, type Capability } from "./capabilities.js";
 
@@ -37,6 +37,7 @@ export interface FunctionInfo {
   unresolvedCalls: CallSite[];
   weightedStatements: number;
   statementCount: number;
+  ftsSource?: string; // .fts source file path (set when function lives in an auto-generated index.ts)
 }
 
 export interface ProjectScan {
@@ -100,6 +101,61 @@ function resolveCaps(name: string, node: Node): { caps: Set<Capability>; isDecla
   const fromJSDoc = extractCapsFromJSDoc(node);
   if (fromJSDoc.found) return { caps: fromJSDoc.caps, isDeclared: true };
   return { caps: new Set<Capability>(PROPAGATE_CAPS), isDeclared: false };
+}
+
+// ── fts source remapping ──
+
+const FTS_HEADER = /^\/\/ AUTO-GENERATED from /;
+
+function kebabToCamel(s: string): string {
+  return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function kebabToPascal(s: string): string {
+  const c = kebabToCamel(s);
+  return c[0].toUpperCase() + c.slice(1);
+}
+
+function detectFtsDir(sf: SourceFile): string | null {
+  const text = sf.getFullText();
+  if (!FTS_HEADER.test(text)) return null;
+  return dirname(sf.getFilePath());
+}
+
+function remapFtsSources(project: Project, functions: Map<string, FunctionInfo>) {
+  for (const sf of project.getSourceFiles()) {
+    const filePath = sf.getFilePath();
+    if (!filePath.endsWith("/index.ts")) continue;
+
+    const ftsDir = detectFtsDir(sf);
+    if (!ftsDir) continue;
+
+    // Parse // ── {stem} ── markers to build identifier → stem mapping
+    const text = sf.getFullText();
+    const stemMap = new Map<string, string>(); // identifier (camelCase or PascalCase) → stem
+    const markerRe = /^\/\/ ── (.+) ──$/gm;
+    let match;
+    while ((match = markerRe.exec(text)) !== null) {
+      const stem = match[1];
+      const clean = stem.replace(/^_/, "");
+      const camel = kebabToCamel(clean);
+      const pascal = kebabToPascal(clean);
+      stemMap.set(camel, stem);
+      stemMap.set(pascal, stem);
+    }
+
+    for (const [id, fn] of functions) {
+      if (fn.filePath !== filePath) continue;
+      const stem = stemMap.get(fn.name);
+      if (!stem) continue;
+      const isType = fn.name[0] === fn.name[0].toUpperCase();
+      const sourceName = isType ? stem + ".type.fts" : stem + ".fts";
+      const ftsSource = join(ftsDir, sourceName);
+      fn.ftsSource = ftsSource;
+      fn.filePath = ftsSource;
+      fn.line = 1;
+    }
+  }
 }
 
 // ── Return type detection ──
@@ -339,6 +395,9 @@ export function scanProject(tsConfigPath: string): ProjectScan {
     if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
     scanFileDeclarations(sf, functions);
   }
+
+  // Pass 1.5: remap fts auto-generated index.ts → .fts source files
+  remapFtsSources(project, functions);
 
   // Pass 2: resolve calls
   for (const sf of project.getSourceFiles()) {

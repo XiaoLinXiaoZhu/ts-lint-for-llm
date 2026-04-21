@@ -1,4 +1,4 @@
-// Fallible
+/** @capability Fallible */
 (raw: string): LyricLineWithTimestamp[] => {
   const lines: LyricLineWithTimestamp[] = [];
   for (const line of raw.split("\n")) {

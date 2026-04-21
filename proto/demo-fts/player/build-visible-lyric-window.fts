@@ -1,3 +1,4 @@
+/** @capability */
 (state: Readonly<ImmutablePlayerState>, windowSize: number): DisplayLineWithActiveFlag[] => {
   const { lyrics, activeLine } = state;
   const half = Math.floor(windowSize / 2);

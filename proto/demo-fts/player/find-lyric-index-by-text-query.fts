@@ -1,3 +1,4 @@
+/** @capability */
 (lyrics: readonly LyricLineWithTimestamp[], query: string): number => {
   for (let i = 0; i < lyrics.length; i++) {
     if (lyrics[i].text.includes(query)) return i;

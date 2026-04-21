@@ -1,3 +1,4 @@
+/** @capability */
 (state: Readonly<ImmutablePlayerState>, deltaSeconds: number): ImmutablePlayerState => {
   if (!state.playing) return state;
   const currentTime = state.currentTime + deltaSeconds;

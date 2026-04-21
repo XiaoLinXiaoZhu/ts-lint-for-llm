@@ -6,7 +6,7 @@ import {
   seekPlayerToMatchingLyric,
   togglePlayerPlayingState,
   renderPlayerToString,
-} from "./player.gen";
+} from "./player";
 
 const lrc = `[00:00.00]月亮代表我的心
 [00:12.50]你问我爱你有多深

@@ -1,5 +1,5 @@
 // AUTO-GENERATED from player/
-// Do not edit — modify the .fts/.tts sources instead.
+// Do not edit — modify the .fts/.type.fts sources instead.
 
 // 外部依赖（本项目无外部依赖）
 
@@ -29,6 +29,7 @@ export type LyricLineWithTimestamp = {
 
 // ── advance-player-by-delta-seconds ──
 
+/** @capability */
 export const advancePlayerByDeltaSeconds = (state: Readonly<ImmutablePlayerState>, deltaSeconds: number): ImmutablePlayerState => {
   if (!state.playing) return state;
   const currentTime = state.currentTime + deltaSeconds;
@@ -38,6 +39,7 @@ export const advancePlayerByDeltaSeconds = (state: Readonly<ImmutablePlayerState
 
 // ── build-visible-lyric-window ──
 
+/** @capability */
 export const buildVisibleLyricWindow = (state: Readonly<ImmutablePlayerState>, windowSize: number): DisplayLineWithActiveFlag[] => {
   const { lyrics, activeLine } = state;
   const half = Math.floor(windowSize / 2);
@@ -52,11 +54,13 @@ export const buildVisibleLyricWindow = (state: Readonly<ImmutablePlayerState>, w
 
 // ── create-initial-player-state ──
 
+/** @capability */
 export const createInitialPlayerState = (lyrics: readonly LyricLineWithTimestamp[]): ImmutablePlayerState =>
   ({ lyrics, currentTime: 0, playing: false, activeLine: -1 })
 
 // ── find-active-lyric-index-at-time ──
 
+/** @capability */
 export const findActiveLyricIndexAtTime = (lyrics: readonly LyricLineWithTimestamp[], time: number): number => {
   let idx = -1;
   for (let i = 0; i < lyrics.length; i++) {
@@ -68,6 +72,7 @@ export const findActiveLyricIndexAtTime = (lyrics: readonly LyricLineWithTimesta
 
 // ── find-lyric-index-by-text-query ──
 
+/** @capability */
 export const findLyricIndexByTextQuery = (lyrics: readonly LyricLineWithTimestamp[], query: string): number => {
   for (let i = 0; i < lyrics.length; i++) {
     if (lyrics[i].text.includes(query)) return i;
@@ -77,6 +82,7 @@ export const findLyricIndexByTextQuery = (lyrics: readonly LyricLineWithTimestam
 
 // ── format-seconds-to-mm-ss ──
 
+/** @capability */
 export const formatSecondsToMmSs = (seconds: number): string => {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -99,6 +105,7 @@ export const parseLrcTextToLyricLines = (raw: string): LyricLineWithTimestamp[] 
 
 // ── render-player-to-string ──
 
+/** @capability */
 export const renderPlayerToString = (state: Readonly<ImmutablePlayerState>, windowSize: number): string => {
   const lines = buildVisibleLyricWindow(state, windowSize);
   const header = `♪ ${formatSecondsToMmSs(state.currentTime)} ${state.playing ? "▶" : "⏸"}`;
@@ -110,6 +117,7 @@ export const renderPlayerToString = (state: Readonly<ImmutablePlayerState>, wind
 
 // ── seek-player-to-matching-lyric ──
 
+/** @capability */
 export const seekPlayerToMatchingLyric = (state: Readonly<ImmutablePlayerState>, query: string): ImmutablePlayerState => {
   const idx = findLyricIndexByTextQuery(state.lyrics, query);
   if (idx === -1) return state;
@@ -118,6 +126,7 @@ export const seekPlayerToMatchingLyric = (state: Readonly<ImmutablePlayerState>,
 
 // ── seek-player-to-time ──
 
+/** @capability */
 export const seekPlayerToTime = (state: Readonly<ImmutablePlayerState>, time: number): ImmutablePlayerState => {
   const activeLine = findActiveLyricIndexAtTime(state.lyrics, time);
   return { ...state, currentTime: time, activeLine };
@@ -125,5 +134,6 @@ export const seekPlayerToTime = (state: Readonly<ImmutablePlayerState>, time: nu
 
 // ── toggle-player-playing-state ──
 
+/** @capability */
 export const togglePlayerPlayingState = (state: Readonly<ImmutablePlayerState>): ImmutablePlayerState =>
   ({ ...state, playing: !state.playing })
