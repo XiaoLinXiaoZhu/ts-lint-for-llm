@@ -144,10 +144,10 @@ export function analyze(scan: ProjectScan): AnalysisResult {
         continue;
       }
 
-      // 3. Unregistered
+      // 3. Unregistered — checkCall every time, diagnostic only once per bare name
+      checkCall(diagnostics, fn, callerEffective, call.line, calleeName, new Set(PROPAGATE_CAPS));
       if (!reportedUnresolved.has(calleeName)) {
         reportedUnresolved.add(calleeName);
-        checkCall(diagnostics, fn, callerEffective, call.line, calleeName, new Set(PROPAGATE_CAPS));
         diagnostics.push({
           kind: DiagnosticKind.Unregistered,
           functionId: id, functionName: fn.name,

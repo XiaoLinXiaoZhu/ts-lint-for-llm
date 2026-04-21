@@ -428,17 +428,13 @@ function resolveFileCalls(sf: SourceFile, functions: Map<string, FunctionInfo>) 
     const callLine = node.getStartLineNumber();
 
     if ("id" in result) {
-      if (!owner.resolvedCalls.some(c => c.target === result.id)) {
-        owner.resolvedCalls.push({ target: result.id, line: callLine });
-      }
+      owner.resolvedCalls.push({ target: result.id, line: callLine });
     } else {
-      if (!owner.unresolvedCalls.some(c => c.target === result.name)) {
-        owner.unresolvedCalls.push({
-          target: result.name,
-          qualifiedName: result.qualifiedName,
-          line: callLine,
-        });
-      }
+      owner.unresolvedCalls.push({
+        target: result.name,
+        qualifiedName: result.qualifiedName,
+        line: callLine,
+      });
     }
   });
 }
