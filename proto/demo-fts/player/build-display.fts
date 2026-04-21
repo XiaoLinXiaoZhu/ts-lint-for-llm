@@ -1,0 +1,11 @@
+(state: Readonly<PlayerState>, windowSize: number): DisplayLine[] => {
+  const { lyrics, activeLine } = state;
+  const half = Math.floor(windowSize / 2);
+  const start = Math.max(0, activeLine - half);
+  const end = Math.min(lyrics.length, start + windowSize);
+  const display: DisplayLine[] = [];
+  for (let i = start; i < end; i++) {
+    display.push({ index: i, text: lyrics[i].text, active: i === activeLine });
+  }
+  return display;
+}

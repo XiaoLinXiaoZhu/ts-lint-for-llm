@@ -1,0 +1,2 @@
+(lyrics: readonly LyricLine[]): PlayerState =>
+  ({ lyrics, currentTime: 0, playing: false, activeLine: -1 })

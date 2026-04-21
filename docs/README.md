@@ -14,6 +14,7 @@
 | 012 | [能力加权评分模型](012-capability-scoring-model.md) | 完成 — AST 语句加权 × 能力数，验证了 bad→good→best 三级降分 |
 | 017 | [统一评分模型](017-unified-scoring-model.md) | 完成 — 能力负担 + 类型松散度双维度，实验验证两个维度独立 |
 | 018 | [能力分类](018-capability-taxonomy.md) | 完成 — 精简到 5 个核心能力（IO/Fallible/Mutable/Async/Impure），对齐 Koka 效果系统 |
+| 019 | [.fts/.tts 工作空间协议](019-fts-workspace-protocol.md) | 活跃 — AI 原生代码格式：一函数一文件、文件名即名字、编译到标准 TS |
 
 ## 仍在讨论
 

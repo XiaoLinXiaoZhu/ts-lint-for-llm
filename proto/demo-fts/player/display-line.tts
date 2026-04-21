@@ -1,0 +1,5 @@
+{
+  readonly index: number;
+  readonly text: string;
+  readonly active: boolean;
+}

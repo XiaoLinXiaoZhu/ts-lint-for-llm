@@ -1,0 +1,6 @@
+{
+  readonly lyrics: readonly LyricLine[];
+  readonly currentTime: number;
+  readonly playing: boolean;
+  readonly activeLine: number;
+}

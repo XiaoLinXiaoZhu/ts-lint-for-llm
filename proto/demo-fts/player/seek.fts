@@ -1,0 +1,4 @@
+(state: Readonly<PlayerState>, time: number): PlayerState => {
+  const activeLine = findActiveLine(state.lyrics, time);
+  return { ...state, currentTime: time, activeLine };
+}

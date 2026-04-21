@@ -1,0 +1,11 @@
+// Fallible
+(raw: string): LyricLine[] => {
+  const lines: LyricLine[] = [];
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)$/);
+    if (!m) continue;
+    const time = Number(m[1]) * 60 + Number(m[2]) + Number(m[3]) / 100;
+    lines.push({ time, text: m[4].trim() });
+  }
+  return lines.sort((a, b) => a.time - b.time);
+}

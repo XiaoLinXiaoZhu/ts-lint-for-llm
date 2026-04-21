@@ -1,0 +1,6 @@
+(state: Readonly<PlayerState>, deltaSeconds: number): PlayerState => {
+  if (!state.playing) return state;
+  const currentTime = state.currentTime + deltaSeconds;
+  const activeLine = findActiveLine(state.lyrics, currentTime);
+  return { ...state, currentTime, activeLine };
+}
