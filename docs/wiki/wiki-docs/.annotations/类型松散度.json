@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "类型松散度.md",
+  "annotations": [
+    {
+      "id": "mo85ffs1dcebp4",
+      "selectedText": "interface 中的可选属性签名",
+      "comment": "这个type里面也会处理对吧？请你将描述修改的清晰一点。",
+      "startOffset": 294,
+      "endOffset": 312,
+      "anchorLine": 12,
+      "status": "resolved",
+      "createdAt": "2026-04-21T04:53:53.953Z",
+      "updatedAt": "2026-04-21T05:07:39.454Z"
+    }
+  ]
+}

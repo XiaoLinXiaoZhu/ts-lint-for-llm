@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "诊断/implicit_capability.md",
+  "annotations": [
+    {
+      "id": "mo86vi8x81uxhd",
+      "selectedText": "不触发——已消化\n/** @capability IO !Fallible */\nfunction findUser(id: string): User | null { ... }\n// 不产生 implicit_capability：!Fallible 消化声明抑制了自动检测",
+      "comment": "这里还是有问题。不是说了消化指的是消化调用的fallible函数吗？\n\n这个函数已经是 User ｜ null 的了，他就必然是fallible的函数，要么通过\n- parse 提前处理\n- Reault《T，E》 显式申明错误\n- 提供fallback",
+      "startOffset": 1028,
+      "endOffset": 1167,
+      "anchorLine": 60,
+      "status": "resolved",
+      "createdAt": "2026-04-21T05:34:23.265Z",
+      "updatedAt": "2026-04-21T05:39:03.651Z"
+    }
+  ]
+}

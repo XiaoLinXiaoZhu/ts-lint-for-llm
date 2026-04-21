@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "能力/HandleMutable.md",
+  "annotations": [
+    {
+      "id": "mo87oky70uk55a",
+      "selectedText": "/** @capability HandleMutable */\nfunction displaySorted(items: string[]): string[] {\n  const copy = [...items];     // 拷贝\n  sortItems(copy);             // sortItems 是 Mutable，但传入的是局部拷贝\n  return copy;                 // 原 items 未被修改，Mutable 不再传播\n}",
+      "comment": "这里有问题，非mutable要求参数全部为基本类型，或者为只读类型。\n\n请你修改示例和下面的注意内容。",
+      "startOffset": 60,
+      "endOffset": 307,
+      "anchorLine": null,
+      "status": "resolved",
+      "createdAt": "2026-04-21T05:56:59.791Z",
+      "updatedAt": "2026-04-21T06:03:29.908Z"
+    }
+  ]
+}

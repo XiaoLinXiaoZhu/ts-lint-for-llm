@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "能力/Async.md",
+  "annotations": [
+    {
+      "id": "mo85hyz8jzqcxb",
+      "selectedText": "自动注入会同时产生一条 【async_mismatch】 诊断。",
+      "comment": "自动注入感觉不用添加诊断。\nasync 只有一个情况应该报错 error，就是存在消除行为但是没有申明消化。",
+      "startOffset": 238,
+      "endOffset": 270,
+      "anchorLine": 14,
+      "status": "resolved",
+      "createdAt": "2026-04-21T04:55:52.148Z",
+      "updatedAt": "2026-04-21T05:07:39.453Z"
+    }
+  ]
+}

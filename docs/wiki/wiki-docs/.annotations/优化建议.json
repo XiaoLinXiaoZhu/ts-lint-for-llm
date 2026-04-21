@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "优化建议.md",
+  "annotations": [
+    {
+      "id": "mo8561sk5m2vur",
+      "selectedText": "优化建议\n基于评分结果自动生成的提示列表。触发规则：\n\n条件\t建议内容\ntotalUndeclared > 0\t提示声明能力，说明【未声明函数】按最大惩罚计分\n存在携带 ≥3 个能力的函数\t提示拆分该函数，提取纯逻辑为独立纯函数。强调仅提取「能力更少」的代码才有效\n≥3 个函数携带 ≥2 个能力\t提示系统性重构（状态机模式、effect as data）\n纯函数占比 < 30%（且总函数数 > 3）\t提示收窄接口，减少对外部能力的依赖\ntotalCap > 0 且 totalLoose > 0\t提示优先降低【能力负担分】，再处理【类型松散度】\ntotalCap > 0 且 totalLoose = 0\t提示集中精力降低【能力负担分】\n存在同名函数出现在多个文件中\t提示提取到共享模块减少总能力面积",
+      "comment": "这里改为不是默认提供，不然每一步都提供相同或者相似的提示反而会导致模型总是忽略这部分信息。应该提供一个 hint 参数（类似 summary），从而只提供 hint部分的json。",
+      "startOffset": 0,
+      "endOffset": 334,
+      "anchorLine": 5,
+      "status": "resolved",
+      "createdAt": "2026-04-21T04:46:35.924Z",
+      "updatedAt": "2026-04-21T05:07:39.451Z"
+    }
+  ]
+}

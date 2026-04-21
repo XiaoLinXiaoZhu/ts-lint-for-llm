@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "filePath": "函数ID.md",
+  "annotations": [
+    {
+      "id": "mo85buz178qneu",
+      "selectedText": "函数形式\tID 格式\t示例\n顶层函数 / 变量绑定\t{filePath}#{name}\t/src/io.ts#fetchUser\n对象字面量方法/属性\t{filePath}#{name}@{line}\t/src/api.ts#getUser@12\nclass 方法\t{filePath}#{ClassName}.{methodName}\t/src/greeter.ts#Greeter.greet\n同文件同名的对象方法通过 @{line} 行号后缀区分。",
+      "comment": "这里得看看有没有可能会有边界情况带来的问题。我总是感觉这样的标记不够安全。这个id如果能够和ast解析出来的完全对应就好了。这样的话溯源那里就不用在做一次匹配。",
+      "startOffset": 0,
+      "endOffset": 245,
+      "anchorLine": null,
+      "status": "resolved",
+      "createdAt": "2026-04-21T04:51:07.021Z",
+      "updatedAt": "2026-04-21T05:07:39.453Z"
+    }
+  ]
+}
