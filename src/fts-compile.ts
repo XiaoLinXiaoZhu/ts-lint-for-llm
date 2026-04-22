@@ -40,22 +40,35 @@ function kebabToPascal(s: string): string {
 
 // ── Import extraction ──
 
-function isImportLine(line: string): boolean {
-  const t = line.trimStart();
-  return t.startsWith("import ") || t.startsWith("import{");
-}
-
 function splitImports(content: string): { imports: string[]; body: string } {
   const lines = content.split("\n");
   const imports: string[] = [];
   const bodyLines: string[] = [];
+  let inImport = false;
+  let currentImport: string[] = [];
+
   for (const line of lines) {
-    if (isImportLine(line)) {
-      imports.push(line);
+    const t = line.trimStart();
+    if (inImport) {
+      currentImport.push(line);
+      if (/\bfrom\s+["']/.test(line)) {
+        imports.push(currentImport.join("\n"));
+        currentImport = [];
+        inImport = false;
+      }
+    } else if (t.startsWith("import ") || t.startsWith("import{")) {
+      if (/\bfrom\s+["']/.test(line)) {
+        imports.push(line);
+      } else {
+        inImport = true;
+        currentImport = [line];
+      }
     } else {
       bodyLines.push(line);
     }
   }
+
+  if (currentImport.length > 0) bodyLines.unshift(...currentImport);
   return { imports, body: bodyLines.join("\n").trim() };
 }
 

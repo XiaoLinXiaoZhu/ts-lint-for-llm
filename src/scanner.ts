@@ -465,6 +465,29 @@ function scanFileDeclarations(sf: SourceFile, functions: Map<string, FunctionInf
     }
   });
 
+  // Nested function declarations and const arrow functions inside function bodies
+  sf.forEachDescendant(node => {
+    // Named function declarations inside other functions
+    if (Node.isFunctionDeclaration(node) && node.getName()) {
+      const parent = node.getParent();
+      if (parent && !Node.isSourceFile(parent)) {
+        registerFn(node.getName()!, node, node, node.getBody(), node);
+      }
+      return;
+    }
+    // const x = () => {} inside other functions
+    if (Node.isVariableDeclaration(node)) {
+      const init = node.getInitializer();
+      if (!init || (!Node.isArrowFunction(init) && !Node.isFunctionExpression(init))) return;
+      const stmt = node.getVariableStatement();
+      if (!stmt) return;
+      const parent = stmt.getParent();
+      if (parent && !Node.isSourceFile(parent)) {
+        registerFn(node.getName(), node, init, init.getBody(), node);
+      }
+    }
+  });
+
   // Class methods
   for (const cls of sf.getClasses()) {
     for (const method of cls.getMethods()) {

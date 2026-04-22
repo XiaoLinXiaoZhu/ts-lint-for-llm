@@ -205,8 +205,8 @@ let { scan, result, scores } = runPipeline();
 // ── Fix ──
 
 if (doFix) {
-  const fixResult = applyFixes(scan, result, dryRun);
   if (dryRun) {
+    const fixResult = applyFixes(scan, result, true);
     console.error(`[capability-lint] Dry run: ${fixResult.changes.length} changes (+${fixResult.capsAdded} -${fixResult.capsRemoved})`);
     for (const c of fixResult.changes) {
       const rel = relative(cwd, c.filePath);
@@ -215,29 +215,32 @@ if (doFix) {
       if (c.removed.length) parts.push(`-${c.removed.join(",")}`);
       console.error(`  ${rel}:${c.line} ${c.functionName} ${parts.join(" ")}`);
     }
-  } else if (fixResult.filesModified > 0) {
-    console.error(`[capability-lint] Fixed ${fixResult.filesModified} files (+${fixResult.capsAdded} -${fixResult.capsRemoved}), re-scanning...`);
-    // If .fts files were modified, recompile their directories before re-scanning
-    const ftsDirs = new Set<string>();
-    for (const c of fixResult.changes) {
-      if (c.filePath.endsWith(".fts") && !c.filePath.endsWith(".type.fts")) {
-        ftsDirs.add(dirname(c.filePath));
+  } else {
+    const MAX_ROUNDS = 10;
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      const fixResult = applyFixes(scan, result, false);
+      if (fixResult.filesModified === 0) {
+        if (round === 1) console.error(`[capability-lint] No fixes needed`);
+        break;
       }
-    }
-    if (ftsDirs.size > 0) {
-      const { execSync } = await import("node:child_process");
-      for (const dir of ftsDirs) {
-        try {
-          execSync(`bun ${resolve(dirname(import.meta.url.replace("file://", "")), "fts-compile.ts")} ${dir}`, { stdio: "pipe" });
-          console.error(`[capability-lint] Recompiled fts: ${relative(cwd, dir)}/`);
-        } catch {
-          console.error(`[capability-lint] Failed to recompile fts: ${relative(cwd, dir)}/`);
+      console.error(`[capability-lint] Fix round ${round}: ${fixResult.filesModified} files (+${fixResult.capsAdded} -${fixResult.capsRemoved})`);
+      // Recompile fts directories if .fts files were modified
+      const ftsDirs = new Set<string>();
+      for (const c of fixResult.changes) {
+        if (c.filePath.endsWith(".fts") && !c.filePath.endsWith(".type.fts")) {
+          ftsDirs.add(dirname(c.filePath));
         }
       }
+      if (ftsDirs.size > 0) {
+        const { execSync } = await import("node:child_process");
+        for (const dir of ftsDirs) {
+          try {
+            execSync(`bun ${resolve(dirname(import.meta.url.replace("file://", "")), "fts-compile.ts")} ${dir}`, { stdio: "pipe" });
+          } catch {}
+        }
+      }
+      ({ scan, result, scores } = runPipeline());
     }
-    ({ scan, result, scores } = runPipeline());
-  } else {
-    console.error(`[capability-lint] No fixes needed`);
   }
 }
 
