@@ -5,8 +5,7 @@
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
-    "capability-lint": "dist/cli.js",
-    "fts-compile": "dist/fts-compile.js"
+    "capability-lint": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

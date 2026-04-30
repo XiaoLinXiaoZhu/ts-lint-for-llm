@@ -1,4 +1,0 @@
-{
-  readonly time: number;
-  readonly text: string;
-}

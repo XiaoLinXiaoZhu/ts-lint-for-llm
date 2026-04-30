@@ -1,3 +1,0 @@
-/** @capability */
-(state: Readonly<ImmutablePlayerState>): ImmutablePlayerState =>
-  ({ ...state, playing: !state.playing })

@@ -1,5 +1,0 @@
-/** @capability */
-(state: Readonly<ImmutablePlayerState>, time: number): ImmutablePlayerState => {
-  const activeLine = findActiveLyricIndexAtTime(state.lyrics, time);
-  return { ...state, currentTime: time, activeLine };
-}
