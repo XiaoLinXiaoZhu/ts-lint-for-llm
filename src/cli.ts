@@ -91,19 +91,27 @@ Exit codes: 0 = no errors, 1 = error-level diagnostics found.
 
 ═══ Scoring ═══
 
-  函数得分 = 加权语句数 × 传播能力数（阻断能力不计入）
-  未声明函数按 5 个传播能力计算（最大惩罚）
-  纯函数得分 = 0
-  能力负担分 = 所有函数得分之和（越低越好）
+  ownScore = 加权语句数 × 自身传播能力数（阻断能力不计入）
+  score    = ownScore + Σ(callee.score × 0.5)    ← DECAY=0.5
+           （递归继承所有被调函数的分数，每层衰减50%）
+  未声明函数按 5 个传播能力 + 递归继承计算（最大惩罚）
+  能力负担分 = 所有函数 score 之和（越低越好）
+
+  ownScore vs score
+    ownScore  仅反映函数自身声明的能力负担
+    score     反映函数自身 + 调用子树的总能力负担
+    拆分或合并函数时，ownScore 下降 ≠ score 下降；
+    必须看 score 才能判断重构是否真正降低了能力扩散。
 
 ═══ Workflow ═══
 
-  每次修改后对比分数，分数没降 = 无效修改，应撤回。
+  每次修改后对比 totalCap（所有函数的 score 之和）。
   1. capability-lint --summary   → 记录 totalCap 基线
   2. 修改代码，再跑一次
-  3. 分数降了 → git add
+  3. totalCap 降了 → git add
   4. 没降或升了 → git checkout
-  拆分函数只在提取出「能力更少」的部分时才有效。
+  合并纯 pass-through（只转发调用、无自身逻辑的函数）可使
+  score 下降，因为调用者的继承分数会减少——请优先重构这类函数。
 
 ═══ Examples ═══
 

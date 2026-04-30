@@ -21,6 +21,9 @@ export interface FunctionScore {
   caps: Capability[];
   isDeclared: boolean;
   weightedStatements: number;
+  ownScore: number;
+  inheritedScore: number;
+  calleeCount: number;
   score: number;
 }
 
@@ -35,6 +38,7 @@ export interface FileScore {
 
 export interface ScoreSummary {
   totalCap: number;
+  totalOwn: number;
   totalLoose: number;
   totalFunctions: number;
   totalPure: number;
@@ -58,33 +62,84 @@ export function computeScores(
   const capScores: Partial<Record<Capability, number>> = {};
   const fileCapScores = new Map<string, number>();
 
+  // ── Build call graph from resolved calls ──
+  // callees[callerId] = calleeId[]
+  const callees = new Map<string, string[]>();
+  for (const [id, fn] of scan.functions) {
+    const ids: string[] = [];
+    for (const call of fn.resolvedCalls) {
+      if (scan.functions.has(call.target)) {
+        ids.push(call.target);
+      }
+    }
+    callees.set(id, ids);
+  }
+
+  // ── First pass: own score (the old formula) ──
   for (const [id, fn] of scan.functions) {
     const effective = result.effectiveCaps.get(id) ?? fn.declaredCaps;
     // Scoring: only count propagate (scorable) capabilities
     const scorableCaps = fn.isDeclared
       ? [...effective].filter(c => SCORABLE_CAPS.includes(c))
       : [...PROPAGATE_CAPS]; // undeclared → max penalty (5 propagate caps)
-    const score = Math.round(fn.weightedStatements * scorableCaps.length * 10) / 10;
+    const ownScore = Math.round(fn.weightedStatements * scorableCaps.length * 10) / 10;
 
     fnScores.push({
       id, name: fn.name, filePath: fn.filePath, line: fn.line,
       caps: scorableCaps, isDeclared: fn.isDeclared,
-      weightedStatements: fn.weightedStatements, score,
+      weightedStatements: fn.weightedStatements,
+      ownScore, inheritedScore: 0, calleeCount: 0, score: ownScore,
     });
 
     for (const c of scorableCaps) {
       capScores[c] = (capScores[c] || 0) + fn.weightedStatements;
     }
-    fileCapScores.set(fn.filePath, (fileCapScores.get(fn.filePath) || 0) + score);
   }
 
+  // ── Fixed-point iteration for recursive scores ──
+  // score(F) = ownScore(F) + Σ_{G∈callees(F)} score(G) × DECAY
+  const scoreMap = new Map<string, FunctionScore>();
+  for (const fs of fnScores) scoreMap.set(fs.id, fs);
+
+  const DECAY = 0.5;
+  let changed = true;
+  let iterations = 0;
+  const MAX_ITER = 100;
+  while (changed && iterations < MAX_ITER) {
+    changed = false;
+    iterations++;
+    for (const fs of fnScores) {
+      const cIds = callees.get(fs.id) ?? [];
+      let inherited = 0;
+      for (const cId of cIds) {
+        const callee = scoreMap.get(cId);
+        if (callee) inherited += callee.score * DECAY;
+      }
+      inherited = Math.round(inherited * 10) / 10;
+      const newScore = Math.round((fs.ownScore + inherited) * 10) / 10;
+      if (Math.abs(newScore - fs.score) > 0.005) {
+        fs.score = newScore;
+        fs.inheritedScore = inherited;
+        fs.calleeCount = cIds.length;
+        changed = true;
+      }
+    }
+  }
+
+  // ── File cap scores from recursive scores ──
+  for (const fs of fnScores) {
+    fileCapScores.set(fs.filePath, (fileCapScores.get(fs.filePath) || 0) + fs.score);
+  }
+
+  // ── Round cap scores ──
   for (const k of Object.keys(capScores)) {
     capScores[k as Capability] = Math.round(capScores[k as Capability]! * 10) / 10;
   }
 
+  // Sort by recursive score (descending)
   fnScores.sort((a, b) => b.score - a.score);
 
-  // Looseness
+  // ── Looseness ──
   const looseByType: Record<string, { count: number; penalty: number }> = {};
   let totalLoose = 0;
   for (const [, lr] of loosenessResults) {
@@ -96,7 +151,7 @@ export function computeScores(
     }
   }
 
-  // File scores
+  // ── File scores ──
   const files = new Set<string>();
   for (const fn of scan.functions.values()) files.add(fn.filePath);
   const fileScores: FileScore[] = [];
@@ -114,13 +169,15 @@ export function computeScores(
   }
   fileScores.sort((a, b) => (b.capScore + b.looseScore) - (a.capScore + a.looseScore));
 
+  // ── Totals ──
   const totalCap = Math.round(fnScores.reduce((s, f) => s + f.score, 0) * 10) / 10;
+  const totalOwn = Math.round(fnScores.reduce((s, f) => s + f.ownScore, 0) * 10) / 10;
   const totalFunctions = fnScores.length;
   const totalPure = fnScores.filter(f => f.isDeclared && f.caps.length === 0).length;
   const totalUndeclared = fnScores.filter(f => !f.isDeclared).length;
 
   return {
-    totalCap, totalLoose, totalFunctions, totalPure, totalUndeclared,
+    totalCap, totalOwn, totalLoose, totalFunctions, totalPure, totalUndeclared,
     capScores, looseByType, allFunctions: fnScores, topFunctions: fnScores.slice(0, 10), fileScores,
   };
 }
@@ -135,6 +192,7 @@ interface TipRule {
 interface TipContext {
   fns: FunctionScore[];
   totalCap: number;
+  totalOwn: number;
   totalLoose: number;
   totalFunctions: number;
   totalPure: number;
@@ -155,7 +213,7 @@ const TIP_RULES: TipRule[] = [
     check: ({ fns, cwd }) => {
       const fn = fns.find(f => f.caps.length >= 3);
       return fn
-        ? `${relative(cwd, fn.filePath)}:${fn.line} ${fn.name} 携带 ${fn.caps.length} 个能力(${fn.caps.join("+")})。考虑提取纯逻辑为独立纯函数。仅提取「能力更少」的代码才有效。`
+        ? `${relative(cwd, fn.filePath)}:${fn.line} ${fn.name} 携带 ${fn.caps.length} 个能力(${fn.caps.join("+")})。拆分需付出 DECAY 代价(×0.5)，因此只有真正分离出「能力更少」的代码才值当。`
         : null;
     },
   },
@@ -169,10 +227,30 @@ const TIP_RULES: TipRule[] = [
     },
   },
   {
+    keyword: "thin-delegate",
+    check: ({ fns, cwd }) => {
+      const thin = fns.find(f => f.ownScore === 0 && f.inheritedScore > 0 && f.isDeclared);
+      return thin
+        ? `${relative(cwd, thin.filePath)}:${thin.line} ${thin.name} 自身无能力负载(ownScore=0)，但继承得分 ${thin.inheritedScore.toFixed(1)}。它是透传函数。`
+        : null;
+    },
+  },
+  {
+    keyword: "merge",
+    check: ({ fns, cwd }) => {
+      const thins = fns.filter(f => f.ownScore === 0 && f.inheritedScore > 0 && f.isDeclared);
+      if (thins.length >= 2) {
+        const names = thins.slice(0, 3).map(f => f.name).join(", ");
+        return `${thins.length} 个透传函数(如 ${names})。考虑合并以消除间接调用带来的 DECAY 损失。`;
+      }
+      return null;
+    },
+  },
+  {
     keyword: "purity",
     check: ({ totalFunctions, totalPure }) =>
       totalFunctions > 3 && totalPure / totalFunctions < 0.3
-        ? `纯函数占比 ${Math.round(totalPure / totalFunctions * 100)}%。收窄接口，减少对外部能力的依赖。`
+        ? `纯函数占比 ${Math.round(totalPure / totalFunctions * 100)}%。注意：纯函数如果调用非纯函数仍会继承能力负担。收窄接口，减少对外部能力的依赖。`
         : null,
   },
   {
@@ -205,6 +283,7 @@ export function generateTips(scores: ScoreSummary, cwd: string, hintKeyword?: st
   const ctx: TipContext = {
     fns: scores.allFunctions,
     totalCap: scores.totalCap,
+    totalOwn: scores.totalOwn,
     totalLoose: scores.totalLoose,
     totalFunctions: scores.totalFunctions,
     totalPure: scores.totalPure,
@@ -234,6 +313,7 @@ export function formatJSON(
 ): string {
   const scoresObj: any = {
     totalCap: scores.totalCap,
+    totalOwn: scores.totalOwn,
     totalLoose: scores.totalLoose,
     totalFunctions: scores.totalFunctions,
     totalPure: scores.totalPure,
@@ -266,6 +346,9 @@ export function formatJSON(
       caps: f.caps,
       isDeclared: f.isDeclared,
       weightedStatements: f.weightedStatements,
+      ownScore: f.ownScore,
+      inheritedScore: f.inheritedScore,
+      calleeCount: f.calleeCount,
       score: f.score,
     })),
     scores: scoresObj,
