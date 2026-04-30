@@ -26,7 +26,7 @@ export function scanProject(tsConfigPath: string): ProjectScan {
   const externalCaps = new Map<string, ExternalCapEntry>();
   for (const entry of capEntries) externalCaps.set(entry.name, entry);
   if (capEntries.length > 0) {
-    console.error(`[capability-lint] Loaded ${capEntries.length} external declarations from .cap.ts files`);
+    console.error(`[lm-linter] Loaded ${capEntries.length} external declarations from .cap.ts files`);
   }
 
   for (const sf of project.getSourceFiles()) {

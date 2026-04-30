@@ -108,8 +108,14 @@ for (let i = 0; i < args.length; i++) {
   if (!a.startsWith("--")) { positional.push(a); continue; }
 }
 
-// Default to cap
-if (!subcommand) subcommand = "cap";
+// Default to cap — show help if no args at all
+if (!subcommand) {
+  if (args.length === 0) {
+    console.log(HELP);
+    process.exit(0);
+  }
+  subcommand = "cap";
+}
 
 // ── Common setup ──
 
