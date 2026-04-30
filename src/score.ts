@@ -47,6 +47,7 @@ export interface ScoreSummary {
   allFunctions: FunctionScore[];
   topFunctions: FunctionScore[];
   fileScores: FileScore[];
+  tips?: string[];
 }
 
 // ── Score computation ──
