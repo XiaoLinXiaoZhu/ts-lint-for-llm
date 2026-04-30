@@ -46,6 +46,7 @@ export interface ProjectScan {
 
 // ── Capability parsing ──
 
+/** @capability */
 function extractCapsFromSuffix(name: string): Set<Capability> | null {
   const parts = name.split("_");
   const caps = new Set<Capability>();
@@ -59,6 +60,7 @@ function extractCapsFromSuffix(name: string): Set<Capability> | null {
   return found ? caps : null;
 }
 
+/** @capability IO Impure */
 function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; found: boolean } {
   const jsDocs = getLeadingJSDoc(node);
   for (const text of jsDocs) {
@@ -78,6 +80,7 @@ function extractCapsFromJSDoc(node: Node): { caps: Set<Capability>; found: boole
   return { caps: new Set(), found: false };
 }
 
+/** @capability IO Impure */
 function getLeadingJSDoc(node: Node): string[] {
   const results: string[] = [];
   for (const range of node.getLeadingCommentRanges()) {
@@ -94,6 +97,7 @@ function getLeadingJSDoc(node: Node): string[] {
   return results;
 }
 
+/** @capability IO Impure */
 function resolveCaps(name: string, node: Node): { caps: Set<Capability>; isDeclared: boolean } {
   const fromSuffix = extractCapsFromSuffix(name);
   if (fromSuffix) return { caps: fromSuffix, isDeclared: true };
@@ -106,16 +110,19 @@ function resolveCaps(name: string, node: Node): { caps: Set<Capability>; isDecla
 
 type FnNode = FunctionDeclaration | ArrowFunction | FunctionExpression | MethodDeclaration;
 
+/** @capability IO Impure */
 function checkReturnsAsync(node: FnNode): boolean {
   if (node.isAsync()) return true;
   const text = node.getReturnType().getText();
   return /^(Promise|AsyncIterable|AsyncGenerator|AsyncIterableIterator)</.test(text);
 }
 
+/** @capability IO Impure */
 function checkReturnsNullable(node: FnNode): boolean {
   return typeIsNullable(node.getReturnType());
 }
 
+/** @capability IO Impure */
 function typeIsNullable(type: import("ts-morph").Type): boolean {
   if (type.isNull() || type.isUndefined()) return true;
   if (type.isUnion()) {
@@ -129,6 +136,7 @@ function typeIsNullable(type: import("ts-morph").Type): boolean {
 
 // ── Mutable param detection ──
 
+/** @capability IO Impure */
 function detectMutableParams(params: ParameterDeclaration[]): string[] {
   const result: string[] = [];
   for (const param of params) {
@@ -137,6 +145,7 @@ function detectMutableParams(params: ParameterDeclaration[]): string[] {
   return result;
 }
 
+/** @capability IO Impure */
 function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
   const type = param.getType();
   if (isPrimitive(type)) return false;
@@ -163,6 +172,7 @@ function isNonReadonlyRefParam(param: ParameterDeclaration): boolean {
   return isRefType(type);
 }
 
+/** @capability IO Impure */
 function isPrimitive(type: import("ts-morph").Type): boolean {
   return type.isString() || type.isNumber() || type.isBoolean() ||
     type.isStringLiteral() || type.isNumberLiteral() || type.isBooleanLiteral() ||
@@ -170,6 +180,7 @@ function isPrimitive(type: import("ts-morph").Type): boolean {
     type.isEnum() || type.isEnumLiteral();
 }
 
+/** @capability IO Impure */
 function isRefType(type: import("ts-morph").Type): boolean {
   if (isPrimitive(type)) return false;
   if (type.isUnion()) return type.getUnionTypes().some(t => isRefType(t));
@@ -200,10 +211,12 @@ const BRANCH_KINDS = new Set([
   SyntaxKind.ConditionalExpression,
 ]);
 
+/** @capability IO Impure */
 function computeWeightedStatements(body: Node): { count: number; weighted: number } {
   let count = 0;
   let weighted = 0;
 
+  /** @capability IO Impure */
   function walk(node: Node, depth: number) {
     const kind = node.getKind();
     if (STATEMENT_KINDS.has(kind)) {
@@ -221,10 +234,12 @@ function computeWeightedStatements(body: Node): { count: number; weighted: numbe
 
 // ── Call resolution ──
 
+/** @capability */
 function makeFnId(filePath: string, pos: number): string {
   return `${filePath}:${pos}`;
 }
 
+/** @capability IO Impure */
 function resolveCallTarget(
   call: CallExpression,
   functions: Map<string, FunctionInfo>,
@@ -278,6 +293,7 @@ function resolveCallTarget(
   return { unresolved: true, name: callName ?? "unknown" };
 }
 
+/** @capability IO Impure */
 function getCallName(call: CallExpression): string | null {
   const expr = call.getExpression();
   if (Node.isIdentifier(expr)) return expr.getText();
@@ -285,6 +301,7 @@ function getCallName(call: CallExpression): string | null {
   return null;
 }
 
+/** @capability IO Impure */
 function findOwnerFunction(
   node: Node,
   filePath: string,
@@ -322,6 +339,7 @@ function findOwnerFunction(
 
 // ── Project scan ──
 
+/** @capability IO Impure */
 export function scanProject(tsConfigPath: string): ProjectScan {
   const project = new Project({ tsConfigFilePath: tsConfigPath });
   const functions = new Map<string, FunctionInfo>();
@@ -349,9 +367,11 @@ export function scanProject(tsConfigPath: string): ProjectScan {
   return { functions, externalCaps };
 }
 
+/** @capability IO Impure */
 function scanFileDeclarations(sf: SourceFile, functions: Map<string, FunctionInfo>) {
   const filePath = sf.getFilePath();
 
+  /** @capability */
   function registerFn(
     name: string,
     capsNode: Node,
@@ -438,6 +458,7 @@ function scanFileDeclarations(sf: SourceFile, functions: Map<string, FunctionInf
   }
 }
 
+/** @capability IO Impure */
 function resolveFileCalls(sf: SourceFile, functions: Map<string, FunctionInfo>) {
   const filePath = sf.getFilePath();
 

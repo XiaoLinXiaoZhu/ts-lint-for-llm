@@ -53,6 +53,7 @@ export interface ScoreSummary {
 
 // ── Score computation ──
 
+/** @capability */
 export function computeScores(
   scan: ProjectScan,
   result: AnalysisResult,
@@ -203,6 +204,7 @@ interface TipContext {
 const TIP_RULES: TipRule[] = [
   {
     keyword: "undeclared",
+    /** @capability */
     check: ({ totalUndeclared }) =>
       totalUndeclared > 0
         ? `${totalUndeclared} 个函数未声明能力，按最大惩罚(×5)计分。添加 @capability 标注可立即降分。`
@@ -210,6 +212,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "split",
+    /** @capability */
     check: ({ fns, cwd }) => {
       const fn = fns.find(f => f.caps.length >= 3);
       return fn
@@ -219,6 +222,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "refactor",
+    /** @capability */
     check: ({ fns }) => {
       const multi = fns.filter(f => f.isDeclared && f.caps.length >= 2);
       return multi.length >= 3
@@ -228,6 +232,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "thin-delegate",
+    /** @capability */
     check: ({ fns, cwd }) => {
       const thin = fns.find(f => f.ownScore === 0 && f.inheritedScore > 0 && f.isDeclared);
       return thin
@@ -237,6 +242,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "merge",
+    /** @capability */
     check: ({ fns, cwd }) => {
       const thins = fns.filter(f => f.ownScore === 0 && f.inheritedScore > 0 && f.isDeclared);
       if (thins.length >= 2) {
@@ -248,6 +254,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "purity",
+    /** @capability */
     check: ({ totalFunctions, totalPure }) =>
       totalFunctions > 3 && totalPure / totalFunctions < 0.3
         ? `纯函数占比 ${Math.round(totalPure / totalFunctions * 100)}%。注意：纯函数如果调用非纯函数仍会继承能力负担。收窄接口，减少对外部能力的依赖。`
@@ -255,6 +262,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "priority",
+    /** @capability */
     check: ({ totalCap, totalLoose }) => {
       if (totalCap > 0 && totalLoose > 0)
         return `优先降低能力负担(${totalCap.toFixed(1)})，再处理类型松散度(${totalLoose})。`;
@@ -265,6 +273,7 @@ const TIP_RULES: TipRule[] = [
   },
   {
     keyword: "duplicate",
+    /** @capability */
     check: ({ fns }) => {
       const freq = new Map<string, Set<string>>();
       for (const fn of fns) {
@@ -279,6 +288,7 @@ const TIP_RULES: TipRule[] = [
   },
 ];
 
+/** @capability IO Impure */
 export function generateTips(scores: ScoreSummary, cwd: string, hintKeyword?: string): string[] {
   const ctx: TipContext = {
     fns: scores.allFunctions,
@@ -305,6 +315,7 @@ export function generateTips(scores: ScoreSummary, cwd: string, hintKeyword?: st
 
 // ── JSON output ──
 
+/** @capability */
 export function formatJSON(
   result: AnalysisResult,
   scores: ScoreSummary,

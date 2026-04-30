@@ -20,6 +20,7 @@ export interface LoosenessResult {
   total: number;
 }
 
+/** @capability IO Impure */
 export function scoreLooseness(sf: SourceFile): LoosenessResult {
   const signals: LooseSignal[] = [];
   const source = sf.getFullText();

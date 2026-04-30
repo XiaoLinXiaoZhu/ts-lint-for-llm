@@ -32,6 +32,7 @@ export interface FixResult {
 
 // ── Main fix logic ──
 
+/** @capability IO */
 export function applyFixes(
   scan: ProjectScan,
   result: AnalysisResult,

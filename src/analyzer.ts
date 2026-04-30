@@ -41,6 +41,7 @@ export interface AnalysisResult {
 
 // ── Analysis ──
 
+/** @capability IO Impure */
 export function analyze(scan: ProjectScan): AnalysisResult {
   const diagnostics: Diagnostic[] = [];
   const effectiveCaps = new Map<string, Set<Capability>>();
@@ -162,6 +163,7 @@ export function analyze(scan: ProjectScan): AnalysisResult {
   return { diagnostics, effectiveCaps, propagatedCaps };
 }
 
+/** @capability */
 function checkCall(
   diagnostics: Diagnostic[],
   caller: FunctionInfo,

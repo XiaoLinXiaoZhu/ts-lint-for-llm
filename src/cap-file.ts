@@ -13,6 +13,7 @@ export interface ExternalCapEntry {
   source: string;
 }
 
+/** @capability IO Impure */
 export function loadCapFiles(rootDir: string): ExternalCapEntry[] {
   const capFiles = findCapFiles(rootDir);
   if (capFiles.length === 0) return [];
@@ -56,6 +57,7 @@ export function loadCapFiles(rootDir: string): ExternalCapEntry[] {
   return entries;
 }
 
+/** @capability IO Impure */
 function extractCapsFromComments(node: Node): Capability[] | null {
   for (const range of node.getLeadingCommentRanges()) {
     const text = range.getText();
@@ -75,8 +77,10 @@ function extractCapsFromComments(node: Node): Capability[] | null {
   return null;
 }
 
+/** @capability IO Impure */
 function findCapFiles(rootDir: string): string[] {
   const files: string[] = [];
+  /** @capability */
   function walk(dir: string) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === "node_modules" || entry.name === "dist" || entry.name.startsWith(".")) continue;

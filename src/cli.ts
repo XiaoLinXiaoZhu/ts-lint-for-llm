@@ -172,6 +172,7 @@ const cwd = dirname(tsConfigPath);
 
 const focusPaths: string[] = positional.map(p => resolve(p));
 
+/** @capability IO Impure */
 function isInScope(filePath: string): boolean {
   if (focusPaths.length === 0) return true;
   return focusPaths.some(fp => {
@@ -183,6 +184,7 @@ function isInScope(filePath: string): boolean {
 
 // ── Scan & Analyze ──
 
+/** @capability IO Impure */
 function runPipeline() {
   console.error(`[capability-lint] Scanning: ${tsConfigPath}`);
   const t0 = Date.now();
