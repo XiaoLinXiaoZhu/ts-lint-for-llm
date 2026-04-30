@@ -11,7 +11,8 @@ import { Project } from "ts-morph";
 import { scanProject } from "./scanner.js";
 import { analyze, DiagnosticKind } from "./analyzer.js";
 import { scoreLooseness } from "./looseness.js";
-import { computeScores, generateTips, formatJSON } from "./reporter.js";
+import { computeScores } from "./score.js";
+import { generateTips, formatJSON } from "./reporter.js";
 import { applyFixes } from "./fixer.js";
 
 const HELP = `capability-lint — Capability-based effect tracking for TypeScript
