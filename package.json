@@ -1,16 +1,16 @@
 {
-  "name": "capability-lint",
-  "version": "0.2.0",
-  "description": "Capability-based effect tracking: lint + score for TypeScript projects",
+  "name": "lm-linter",
+  "version": "0.3.0",
+  "description": "Capability-based effect tracking and type linting for TypeScript projects",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
-    "capability-lint": "dist/cli.js"
+    "lm-linter": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
-    "lint": "bun src/cli.ts",
-    "dev": "bun --watch src/cli.ts",
+    "lint": "bun src/cli.ts cap",
+    "dev": "bun --watch src/cli.ts cap",
     "test": "bun test"
   },
   "dependencies": {
