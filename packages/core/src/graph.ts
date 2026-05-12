@@ -58,6 +58,12 @@ export function buildGraph(tsConfigPath: string): ProjectGraph {
     resolveCalls(sf, functions);
   }
 
+  // Pass 3: scan re-export assertions
+  for (const sf of project.getSourceFiles()) {
+    if (sf.getFilePath().includes("node_modules") || sf.getFilePath().endsWith(".cap.ts")) continue;
+    scanReexportAssertions(sf, functions, project);
+  }
+
   return { functions };
 }
 
@@ -315,4 +321,80 @@ function getLeadingComments(node: Node): string[] {
     if (stmt) for (const range of stmt.getLeadingCommentRanges()) results.push(range.getText());
   }
   return results;
+}
+
+// ── Pass 3: re-export assertions ──
+
+function scanReexportAssertions(sf: SourceFile, functions: Map<string, FunctionInfo>, project: Project) {
+  for (const exportDecl of sf.getExportDeclarations()) {
+    const assertion = parseAssertion(exportDecl);
+    if (!assertion) continue;
+
+    // Named exports: export { fn1, fn2 } from "./module"
+    for (const namedExport of exportDecl.getNamedExports()) {
+      const targetFn = resolveExportTarget(namedExport, functions);
+      if (targetFn) {
+        // Merge assertion (re-export assertion takes precedence if function has none)
+        if (!targetFn.assertion) {
+          targetFn.assertion = assertion;
+        } else {
+          // Combine: add any new forbidden caps
+          for (const prop of assertion.properties) {
+            if (!targetFn.assertion.properties.includes(prop)) {
+              targetFn.assertion.properties.push(prop);
+            }
+          }
+          for (const cap of assertion.forbiddenCaps) {
+            targetFn.assertion.forbiddenCaps.add(cap);
+          }
+        }
+      }
+    }
+
+    // Namespace export: export * from "./module" — apply to all exported functions from that module
+    if (exportDecl.getNamedExports().length === 0 && exportDecl.getModuleSpecifier()) {
+      const moduleSf = exportDecl.getModuleSpecifierSourceFile();
+      if (!moduleSf) continue;
+      const modulePath = moduleSf.getFilePath();
+      for (const [, fn] of functions) {
+        if (fn.filePath === modulePath) {
+          if (!fn.assertion) {
+            fn.assertion = { properties: [...assertion.properties], forbiddenCaps: new Set(assertion.forbiddenCaps) };
+          } else {
+            for (const prop of assertion.properties) {
+              if (!fn.assertion.properties.includes(prop)) fn.assertion.properties.push(prop);
+            }
+            for (const cap of assertion.forbiddenCaps) fn.assertion.forbiddenCaps.add(cap);
+          }
+        }
+      }
+    }
+  }
+}
+
+function resolveExportTarget(namedExport: import("ts-morph").ExportSpecifier, functions: Map<string, FunctionInfo>): FunctionInfo | null {
+  try {
+    const symbol = namedExport.getNameNode().getSymbol();
+    if (!symbol) return null;
+    const decls = symbol.getDeclarations();
+    for (const decl of decls) {
+      if (Node.isExportSpecifier(decl)) {
+        // Follow the chain: get the local symbol
+        const localSymbol = decl.getLocalTargetSymbol?.();
+        if (localSymbol) {
+          const localDecls = localSymbol.getDeclarations();
+          for (const ld of localDecls) {
+            const id = makeId(ld.getSourceFile().getFilePath(), ld.getStart());
+            if (functions.has(id)) return functions.get(id)!;
+          }
+        }
+        continue;
+      }
+      const sf = decl.getSourceFile();
+      if (sf.getFilePath().includes("node_modules")) continue;
+      const id = makeId(sf.getFilePath(), decl.getStart());
+      if (functions.has(id)) return functions.get(id)!;
+    }
+  } catch { /* symbol resolution can fail for external modules */ }
+  return null;
 }
