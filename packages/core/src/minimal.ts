@@ -71,6 +71,8 @@ export function scanMinimal(sf: SourceFile, onlyAsserted: boolean): MinimalResul
   for (const { name, node, posNode } of fnNodes) {
     if (onlyAsserted && !hasMinimalAssertion(posNode) && !hasMinimalAssertion(node)) continue;
 
+    if (isInterfaceImplementation(node)) continue;
+
     const params = node.getParameters();
     if (params.length === 0) continue;
 
@@ -114,6 +116,10 @@ function analyzeParams(params: ParameterDeclaration[], fnNode: FunctionNode): Pa
 
     // Skip rest params and destructured params
     if (param.isRestParameter()) continue;
+
+    // Skip underscore-prefixed params (convention for intentionally unused)
+    if (paramName.startsWith("_")) continue;
+
     if (param.getNameNode().getKind() === SyntaxKind.ObjectBindingPattern ||
         param.getNameNode().getKind() === SyntaxKind.ArrayBindingPattern) {
       // For destructured params, analyze individual bindings
@@ -167,6 +173,11 @@ function analyzeParamUsage(param: ParameterDeclaration, fnNode: FunctionNode): U
       hasNonForwardUse = true;
       break;
     }
+  }
+
+  // If all forwards are to stdlib/builtin functions, this is normal encapsulation
+  if (!hasNonForwardUse && forwardedTo.length > 0 && forwardedTo.every(f => isStdlibCallee(f.callee))) {
+    return { isPassThrough: false, forwardedTo: [] };
   }
 
   return { isPassThrough: !hasNonForwardUse, forwardedTo };
@@ -285,6 +296,75 @@ function findRefsInBody(name: string, body: Node): Node[] {
     }
   });
   return refs;
+}
+
+function isInterfaceImplementation(node: FunctionNode): boolean {
+  // Class method implementing an interface or extending a base class
+  if (Node.isMethodDeclaration(node)) {
+    // Constructors are not interface-mandated — they can have pass-through params
+    if (node.getName() === "constructor") return false;
+    const parent = node.getParent();
+    if (parent && Node.isClassDeclaration(parent)) {
+      if (parent.getImplements().length > 0) return true;
+      if (parent.getExtends()) return true;
+    }
+  }
+  // Object literal method where the object satisfies a type annotation
+  if (Node.isMethodDeclaration(node) || Node.isPropertyAssignment(node)) {
+    const objLiteral = node.getParent();
+    if (objLiteral && Node.isObjectLiteralExpression(objLiteral)) {
+      const objParent = objLiteral.getParent();
+      // const x: SomeType = { method() {} }
+      if (objParent && Node.isVariableDeclaration(objParent) && objParent.getTypeNode()) return true;
+      // return { method() {} } satisfies SomeType
+      if (objParent && Node.isSatisfiesExpression(objParent)) return true;
+      // return { method() {} } as SomeType
+      if (objParent && Node.isAsExpression(objParent)) return true;
+      // someFunction({ method() {} }) — typed param
+      if (objParent && Node.isCallExpression(objParent)) return true;
+    }
+  }
+  return false;
+}
+
+const STDLIB_CALLEES = new Set([
+  // path
+  "resolve", "join", "dirname", "basename", "extname", "relative",
+  // fs
+  "readFileSync", "writeFileSync", "readFile", "writeFile", "mkdirSync",
+  "existsSync", "statSync", "readdirSync", "unlinkSync",
+  "file", "write", "exists", "mkdir", "stat", "readdir", "unlink",
+  // console
+  "log", "warn", "error", "info", "debug",
+  // JSON
+  "stringify", "parse",
+  // Array/Map/Set mutations
+  "push", "pop", "shift", "unshift", "splice", "sort", "reverse",
+  "set", "get", "has", "delete", "clear", "add",
+  // String
+  "trim", "split", "replace", "replaceAll", "slice", "substring",
+  "startsWith", "endsWith", "includes", "indexOf", "toLowerCase", "toUpperCase",
+  // Math
+  "max", "min", "abs", "floor", "ceil", "round", "trunc", "sqrt", "pow", "imul",
+  "random",
+  // Object
+  "keys", "values", "entries", "assign", "freeze",
+  // Timers
+  "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+  // Encoding
+  "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI",
+  "encode", "decode",
+  // Type conversion
+  "String", "Number", "Boolean", "Array",
+  "toString", "valueOf",
+  // RegExp
+  "test", "exec", "match",
+  // formatting/rendering common
+  "stringWidth", "wrapAnsi",
+]);
+
+function isStdlibCallee(name: string): boolean {
+  return STDLIB_CALLEES.has(name);
 }
 
 function getBody(fnNode: FunctionNode): Node | undefined {

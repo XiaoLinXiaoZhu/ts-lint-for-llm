@@ -82,4 +82,38 @@ describe("minimal / pass-through detection", () => {
     // return is not a call → self-use
     expect(result.violations).toHaveLength(0);
   });
+
+  test("underscore-prefixed param is ignored", () => {
+    const result = scan(`
+      declare function inner(x: number): number;
+      function f(x: number, _unused: string): number { return inner(x); }
+    `, false);
+    // x is forwarded, _unused is skipped
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0].passThroughParams).toHaveLength(1);
+    expect(result.violations[0].passThroughParams[0].name).toBe("x");
+  });
+
+  test("stdlib-only forwarding is not reported", () => {
+    const result = scan(`
+      function resolvePath(workspace: string): string { return resolve(workspace); }
+      declare function resolve(p: string): string;
+    `, false);
+    expect(result.violations).toHaveLength(0);
+  });
+
+  test("mixed stdlib and non-stdlib forwarding is reported", () => {
+    const result = scan(`
+      declare function resolve(p: string): string;
+      declare function customProcess(p: string): void;
+      function f(path: string): void {
+        const resolved = resolve(path);
+        customProcess(path);
+      }
+    `, false);
+    // path goes to both resolve (stdlib) and customProcess (not stdlib)
+    // so it's still reported
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0].passThroughParams[0].name).toBe("path");
+  });
 });
