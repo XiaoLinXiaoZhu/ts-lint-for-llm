@@ -7,6 +7,7 @@
 
 import type { Capability } from "./capabilities.js";
 import type { AssertionProperty } from "./capabilities.js";
+import { ASSERTION_PROPERTIES } from "./capabilities.js";
 import type { ProjectGraph, FunctionInfo } from "./graph.js";
 import type { InferredCaps } from "./infer.js";
 import { BUILTIN_CAPABILITIES } from "./builtin.js";
@@ -60,7 +61,8 @@ export function checkAssertions(
     };
 
     for (const prop of fn.assertion.properties) {
-      for (const cap of fn.assertion.forbiddenCaps) {
+      const propForbidden = ASSERTION_PROPERTIES[prop];
+      for (const cap of propForbidden) {
         if (!fnCaps.has(cap)) continue;
 
         // This cap violates this property — find the chain

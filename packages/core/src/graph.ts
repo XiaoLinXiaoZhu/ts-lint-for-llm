@@ -231,7 +231,7 @@ function findOwner(node: Node, filePath: string, functions: Map<string, Function
 function parseAssertion(node: Node): Assertion | null {
   const comments = getLeadingComments(node);
   for (const text of comments) {
-    const match = text.match(/@assert\s+(.+?)(\s*\*\/|\s*$)/);
+    const match = text.match(/@assert\s+([^\n*]+)/);
     if (match) {
       const properties: AssertionProperty[] = [];
       const forbidden = new Set<Capability>();
