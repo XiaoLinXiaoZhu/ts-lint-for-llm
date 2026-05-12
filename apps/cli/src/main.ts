@@ -2,18 +2,17 @@
 /**
  * lm-linter CLI — 断言式效果追踪与类型松散度检测
  *
- *   lm-linter assert [options]   效果断言验证（推断 + 断言检查 + 污染链）
+ *   lm-linter assert [options]   效果断言验证（推断 + 断言检查 + 污染链 + handle 提示）
  *   lm-linter type   [options]   类型松散度检测
  *   lm-linter infer  [options]   显示所有函数的推断能力（辅助）
+ *   lm-linter minimal [options]  穿透参数检测
  */
 
-import { resolve, dirname, relative } from "node:path";
-import { existsSync, statSync } from "node:fs";
-import { buildGraph, inferAll, checkAssertions, loadCapFiles, scanMinimal } from "@lm-linter/core";
-import { formatViolations, formatInferred, formatLooseness } from "./format.js";
-import { parseArgs, type CliOptions } from "./args.js";
-import { Project } from "ts-morph";
-import { scoreLooseness } from "@lm-linter/looseness";
+import { parseArgs } from "./args.js";
+import { runAssert } from "./commands/assert.js";
+import { runType } from "./commands/type.js";
+import { runInfer } from "./commands/infer.js";
+import { runMinimal } from "./commands/minimal.js";
 
 const options = parseArgs(process.argv.slice(2));
 
@@ -22,147 +21,21 @@ if (options.help) {
   process.exit(0);
 }
 
-const tsConfigPath = resolveTsConfig(options.tsconfig);
-const cwd = dirname(tsConfigPath);
-
 switch (options.command) {
   case "assert": runAssert(options); break;
   case "type": runType(options); break;
-  case "minimal": runMinimal(options); break;
   case "infer": runInfer(options); break;
+  case "minimal": runMinimal(options); break;
   default: printHelp(); break;
-}
-
-function runAssert(opts: CliOptions) {
-  console.error(`[lm-linter] Scanning: ${tsConfigPath}`);
-  const t0 = Date.now();
-
-  const graph = buildGraph(tsConfigPath);
-  const capEntries = loadCapFiles(cwd);
-  const externalCaps = new Map(capEntries.map(e => [e.name, e]));
-
-  if (capEntries.length > 0) {
-    console.error(`[lm-linter] Loaded ${capEntries.length} external declarations`);
-  }
-
-  const t1 = Date.now();
-  console.error(`[lm-linter] Graph: ${graph.functions.size} functions (${t1 - t0}ms)`);
-
-  const inferred = inferAll(graph, externalCaps);
-  const violations = checkAssertions(graph, inferred, externalCaps);
-
-  const t2 = Date.now();
-  console.error(`[lm-linter] Inferred + checked in ${t2 - t1}ms`);
-
-  const filtered = filterByScope(violations, opts.paths);
-  const output = formatViolations(filtered, cwd, opts.summary);
-  console.log(output);
-
-  process.exitCode = filtered.length > 0 ? 1 : 0;
-}
-
-function runType(opts: CliOptions) {
-  console.error(`[lm-linter type] Scanning: ${tsConfigPath}`);
-  const project = new Project({ tsConfigFilePath: tsConfigPath });
-
-  const results: Array<{ filePath: string; signals: Array<{ type: string; line: number; desc: string }> }> = [];
-
-  for (const sf of project.getSourceFiles()) {
-    const fp = sf.getFilePath();
-    if (fp.includes("node_modules") || fp.endsWith(".cap.ts")) continue;
-    if (opts.paths.length > 0 && !isInScope(fp, opts.paths)) continue;
-
-    const lr = scoreLooseness(sf);
-    results.push({ filePath: relative(cwd, fp), signals: lr.signals });
-  }
-
-  results.sort((a, b) => b.signals.length - a.signals.length);
-  const output = formatLooseness(results, opts.summary);
-  console.log(output);
-
-  const hasIssues = results.some(r => r.signals.length > 0);
-  process.exitCode = hasIssues ? 1 : 0;
-}
-
-function runInfer(opts: CliOptions) {
-  console.error(`[lm-linter infer] Scanning: ${tsConfigPath}`);
-
-  const graph = buildGraph(tsConfigPath);
-  const capEntries = loadCapFiles(cwd);
-  const externalCaps = new Map(capEntries.map(e => [e.name, e]));
-  const inferred = inferAll(graph, externalCaps);
-
-  const output = formatInferred(graph, inferred, cwd, opts.paths);
-  console.log(output);
-}
-
-function runMinimal(opts: CliOptions) {
-  console.error(`[lm-linter minimal] Scanning: ${tsConfigPath}`);
-  const project = new Project({ tsConfigFilePath: tsConfigPath });
-
-  const allViolations: Array<{ functionName: string; file: string; line: number; passThroughParams: any[] }> = [];
-  const onlyAsserted = !opts.all;
-
-  for (const sf of project.getSourceFiles()) {
-    const fp = sf.getFilePath();
-    if (fp.includes("node_modules") || fp.endsWith(".cap.ts")) continue;
-    if (opts.paths.length > 0 && !isInScope(fp, opts.paths)) continue;
-
-    const result = scanMinimal(sf, onlyAsserted);
-    for (const v of result.violations) {
-      allViolations.push({
-        functionName: v.functionName,
-        file: relative(cwd, v.filePath),
-        line: v.line,
-        passThroughParams: v.passThroughParams,
-      });
-    }
-  }
-
-  if (allViolations.length === 0) {
-    console.log(JSON.stringify({ status: "pass", issues: 0 }, null, 2));
-    process.exitCode = 0;
-  } else {
-    console.log(JSON.stringify({
-      status: "fail",
-      functions: allViolations,
-    }, null, 2));
-    process.exitCode = 1;
-  }
-}
-
-// ── Helpers ──
-
-function resolveTsConfig(flag?: string): string {
-  const path = flag ? resolve(flag) : resolve("tsconfig.json");
-  if (!existsSync(path)) {
-    console.error(`tsconfig not found: ${path}`);
-    process.exit(1);
-  }
-  return path;
-}
-
-function filterByScope(violations: any[], paths: string[]): any[] {
-  if (paths.length === 0) return violations;
-  return violations.filter(v => isInScope(v.assertion.filePath, paths));
-}
-
-function isInScope(filePath: string, paths: string[]): boolean {
-  return paths.some(p => {
-    const resolved = resolve(p);
-    const stat = statSync(resolved, { throwIfNoEntry: false });
-    if (stat?.isDirectory()) return filePath.startsWith(resolved);
-    return filePath === resolved;
-  });
 }
 
 function printHelp() {
   console.log(`lm-linter — 断言式 TypeScript 效果追踪
 
 Usage:
-  lm-linter assert [file|dir ...] [options]   验证 @assert 断言
-  lm-linter type   [file|dir ...] [options]   类型松散度检测
-  lm-linter infer  [file|dir ...] [options]   显示推断的能力集
+  lm-linter assert  [file|dir ...] [options]   验证 @assert 断言
+  lm-linter type    [file|dir ...] [options]   类型松散度检测
+  lm-linter infer   [file|dir ...] [options]   显示推断的能力集
   lm-linter minimal [file|dir ...] [options]   穿透参数检测
 
 Options:
@@ -182,11 +55,20 @@ Options:
 
   属性可组合: @assert infallible immutable sync
 
+═══ Handle 标记 ═══
+
+  @assert HandleFallible    声明此函数已处理了可失败性（如 try/catch）
+  @assert HandleAsync       声明此函数已解包了异步（如 await）
+  @assert HandleMutable     声明此函数已处理了可变性（如 freeze/copy）
+
+  当 assert 子命令检测到 Fallible/Async/Mutable 违规时，
+  会在输出的 handleHints 中提示链上哪些中间函数可以标记 Handle 来阻断传递。
+
 ═══ 工作流 ═══
 
   1. 在关键函数上标记 @assert
   2. 运行 lm-linter assert
-  3. 断言不满足 → 输出污染链 → AI/人按链修复
+  3. 断言不满足 → 输出污染链 + handle 提示 → AI/人按链修复或标记 Handle
   4. 断言满足 → 无输出 → 代码质量已验证
 
 ═══ 外部声明 ═══
@@ -196,7 +78,7 @@ Options:
 
 ═══ 示例 ═══
 
-  lm-linter assert                      完整断言验证
+  lm-linter assert                      完整断言验证（含传递路线 + handle 提示）
   lm-linter assert src/core/            只检查 src/core/
   lm-linter assert --summary            只看汇总
   lm-linter infer                       查看所有函数的推断能力
