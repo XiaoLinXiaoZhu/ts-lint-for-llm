@@ -1,26 +1,18 @@
 {
-  "name": "lm-linter",
-  "version": "0.3.0",
-  "description": "Capability-based effect tracking and type linting for TypeScript projects",
-  "type": "module",
-  "main": "dist/cli.js",
-  "bin": {
-    "lm-linter": "dist/cli.js"
-  },
+  "name": "lm-linter-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "lint": "bun src/cli.ts cap",
-    "dev": "bun --watch src/cli.ts cap",
+    "lint": "bun apps/cli/src/main.ts assert",
+    "lint:type": "bun apps/cli/src/main.ts type",
+    "lint:infer": "bun apps/cli/src/main.ts infer",
     "test": "bun test"
   },
-  "dependencies": {
-    "ts-morph": "^28.0.0"
-  },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
-  },
-  "files": [
-    "dist/"
-  ]
+  }
 }

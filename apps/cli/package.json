@@ -1,0 +1,13 @@
+{
+  "name": "lm-linter",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "lm-linter": "src/main.ts"
+  },
+  "dependencies": {
+    "@lm-linter/core": "workspace:*",
+    "@lm-linter/looseness": "workspace:*",
+    "ts-morph": "^28.0.0"
+  }
+}

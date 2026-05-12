@@ -7,10 +7,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "paths": {
-      "@lm-linter/core": ["./packages/core/src/index.ts"],
-      "@lm-linter/looseness": ["./packages/looseness/src/index.ts"]
-    }
+    "outDir": "dist",
+    "rootDir": "src"
   },
-  "include": ["packages/*/src", "apps/*/src"]
+  "include": ["src"]
 }
