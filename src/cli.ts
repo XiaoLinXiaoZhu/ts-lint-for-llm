@@ -135,10 +135,11 @@ const focusPaths: string[] = positional.map(p => resolve(p));
 /** @capability IO Impure */
 function isInScope(filePath: string): boolean {
   if (focusPaths.length === 0) return true;
+  const normalizedPath = resolve(filePath);
   return focusPaths.some(fp => {
     const stat = statSync(fp, { throwIfNoEntry: false });
-    if (stat?.isDirectory()) return filePath.startsWith(fp);
-    return filePath === fp;
+    if (stat?.isDirectory()) return normalizedPath.startsWith(fp);
+    return normalizedPath === fp;
   });
 }
 

@@ -22,8 +22,9 @@ export function filterByScope(violations: any[], paths: string[]): any[] {
 export function isInScope(filePath: string, paths: string[]): boolean {
   return paths.some(p => {
     const resolved = resolve(p);
+    const normalized = resolve(filePath);
     const stat = statSync(resolved, { throwIfNoEntry: false });
-    if (stat?.isDirectory()) return filePath.startsWith(resolved);
-    return filePath === resolved;
+    if (stat?.isDirectory()) return normalized.startsWith(resolved);
+    return normalized === resolved;
   });
 }
