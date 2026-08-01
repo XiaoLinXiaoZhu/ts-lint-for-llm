@@ -8,8 +8,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "paths": {
-      "@lm-linter/core": ["./packages/core/src/index.ts"],
-      "@lm-linter/looseness": ["./packages/looseness/src/index.ts"]
+      "@lm-linter/model": ["./packages/model/src/index.ts"],
+      "@lm-linter/engine": ["./packages/engine/src/index.ts"],
+      "@lm-linter/rules": ["./packages/rules/src/index.ts"],
+      "@lm-linter/report": ["./packages/report/src/index.ts"]
     }
   },
   "include": ["packages/*/src", "apps/*/src"]

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "2.0",
+  "requirements": [
+    {
+      "id": "F001",
+      "name": "Effect 事实提取",
+      "shall": "从 TypeScript 函数和外部 @effect 源头提取 io、nondeterministic、may-return-none、async、mutates-input。",
+      "verification": ["packages/engine/test/engine.test.ts"]
+    },
+    {
+      "id": "F002",
+      "name": "Effect 自动传播",
+      "shall": "所有未处理 Effect 沿调用图向上传播。",
+      "verification": ["packages/rules/test/rules.test.ts"]
+    },
+    {
+      "id": "F003",
+      "name": "处理证据",
+      "shall": "@handles 声明必须有代码证据，不能隐藏函数自身 Effect。",
+      "verification": ["packages/rules/test/rules.test.ts"]
+    },
+    {
+      "id": "F004",
+      "name": "接口契约",
+      "shall": "使用 @is 检查 pure、total、readonly、sync、deterministic、local、minimal。",
+      "verification": ["packages/rules/test/rules.test.ts", "apps/cli/test/cli.test.ts"]
+    },
+    {
+      "id": "F005",
+      "name": "参数透传审计",
+      "shall": "发现高置信度 pass-through-parameter 并给出依赖下沉建议。",
+      "verification": ["packages/rules/test/rules.test.ts", "apps/cli/test/cli.test.ts"]
+    },
+    {
+      "id": "F006",
+      "name": "薄 CLI",
+      "shall": "CLI 只负责参数、项目选择、格式化、帮助和退出码。",
+      "verification": ["apps/cli/test/cli.test.ts"]
+    },
+    {
+      "id": "F007",
+      "name": "分维度审查",
+      "shall": "副作用、参数透传和类型松散度必须可分别运行，也可汇总运行。",
+      "verification": ["apps/cli/test/cli.test.ts", "packages/rules/test/rules.test.ts"]
+    }
+  ]
+}

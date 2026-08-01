@@ -6,10 +6,15 @@
     "apps/*"
   ],
   "scripts": {
-    "lint": "bun apps/cli/src/main.ts assert",
-    "lint:type": "bun apps/cli/src/main.ts type",
-    "lint:infer": "bun apps/cli/src/main.ts infer",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "bun run typecheck:model && bun run typecheck:engine && bun run typecheck:rules && bun run typecheck:report && bun run typecheck:cli",
+    "typecheck:model": "bunx tsc -p packages/model/tsconfig.json --noEmit",
+    "typecheck:engine": "bunx tsc -p packages/engine/tsconfig.json --noEmit",
+    "typecheck:rules": "bunx tsc -p packages/rules/tsconfig.json --noEmit",
+    "typecheck:report": "bunx tsc -p packages/report/tsconfig.json --noEmit",
+    "typecheck:cli": "bunx tsc -p apps/cli/tsconfig.json --noEmit",
+    "check": "bun apps/cli/src/main.ts check",
+    "audit": "bun apps/cli/src/main.ts audit"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

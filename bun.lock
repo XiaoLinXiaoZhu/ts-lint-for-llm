@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "eslint-plugin-capability",
+      "name": "lm-linter-monorepo",
       "devDependencies": {
         "@types/node": "^22.0.0",
         "typescript": "^5.0.0",
@@ -11,35 +11,49 @@
     },
     "apps/cli": {
       "name": "lm-linter",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "bin": {
         "lm-linter": "src/main.ts",
       },
       "dependencies": {
-        "@lm-linter/core": "workspace:*",
-        "@lm-linter/looseness": "workspace:*",
+        "@lm-linter/engine": "workspace:*",
+        "@lm-linter/model": "workspace:*",
+        "@lm-linter/report": "workspace:*",
+        "@lm-linter/rules": "workspace:*",
+      },
+    },
+    "packages/engine": {
+      "name": "@lm-linter/engine",
+      "version": "1.0.0",
+      "dependencies": {
+        "@lm-linter/model": "workspace:*",
         "ts-morph": "^28.0.0",
       },
     },
-    "packages/core": {
-      "name": "@lm-linter/core",
-      "version": "0.1.0",
+    "packages/model": {
+      "name": "@lm-linter/model",
+      "version": "1.0.0",
+    },
+    "packages/report": {
+      "name": "@lm-linter/report",
+      "version": "1.0.0",
       "dependencies": {
-        "ts-morph": "^28.0.0",
+        "@lm-linter/model": "workspace:*",
       },
     },
-    "packages/looseness": {
-      "name": "@lm-linter/looseness",
-      "version": "0.1.0",
+    "packages/rules": {
+      "name": "@lm-linter/rules",
+      "version": "1.0.0",
       "dependencies": {
-        "ts-morph": "^28.0.0",
+        "@lm-linter/model": "workspace:*",
       },
     },
   },
   "packages": {
-    "@lm-linter/core": ["@lm-linter/core@workspace:packages/core"],
-
-    "@lm-linter/looseness": ["@lm-linter/looseness@workspace:packages/looseness"],
+    "@lm-linter/engine": ["@lm-linter/engine@workspace:packages/engine"],
+    "@lm-linter/model": ["@lm-linter/model@workspace:packages/model"],
+    "@lm-linter/report": ["@lm-linter/report@workspace:packages/report"],
+    "@lm-linter/rules": ["@lm-linter/rules@workspace:packages/rules"],
 
     "@ts-morph/common": ["@ts-morph/common@0.29.0", "", { "dependencies": { "minimatch": "^10.0.1", "path-browserify": "^1.0.1", "tinyglobby": "^0.2.14" } }, "sha512-35oUmphHbJvQ/+UTwFNme/t2p3FoKiGJ5auTjjpNTop2dyREspirjMy82PLSC1pnDJ8ah1GU98hwpVt64YXQsg=="],
 
