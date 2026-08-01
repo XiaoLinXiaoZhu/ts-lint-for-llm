@@ -24,4 +24,11 @@ describe("rules", () => {
     expect(result.diagnostics.some(d => d.evidence.some(e => e.message === "any"))).toBe(true);
     expect(result.diagnostics.every(d => d.kind === "type-looseness")).toBe(true);
   });
+
+  test("pass-through review does not require effect metadata", () => {
+    const snapshot = loadProject(tsconfig);
+    const legacySnapshot = { ...snapshot, externalEffects: {} as never };
+    const result = analyzeProject(legacySnapshot, "pass-through");
+    expect(result.diagnostics.some(d => d.kind === "pass-through-parameter")).toBe(true);
+  });
 });

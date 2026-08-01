@@ -16,11 +16,18 @@ export interface AnalysisResult {
 export type AnalysisMode = "check" | "audit" | "effects" | "pass-through" | "looseness";
 
 export function analyzeProject(snapshot: ProjectSnapshot, mode: AnalysisMode): AnalysisResult {
-  const rawEffects = inferEffects(snapshot);
-  const effects = applyProvenHandling(snapshot, rawEffects);
-  const effectDiagnostics = [...checkContracts(snapshot, effects), ...checkHandling(snapshot, rawEffects)];
-  const structureDiagnostics = checkStructure(snapshot);
-  const loosenessDiagnostics = checkLooseness(snapshot);
+  const needsEffects = mode === "check" || mode === "effects" || mode === "audit";
+  const rawEffects = needsEffects ? inferEffects(snapshot) : new Map<string, Set<Effect>>();
+  const effects = needsEffects ? applyProvenHandling(snapshot, rawEffects) : new Map<string, Set<Effect>>();
+  const effectDiagnostics = needsEffects
+    ? [...checkContracts(snapshot, effects), ...checkHandling(snapshot, rawEffects)]
+    : [];
+  const structureDiagnostics = (mode === "pass-through" || mode === "audit")
+    ? checkStructure(snapshot)
+    : [];
+  const loosenessDiagnostics = (mode === "looseness" || mode === "audit")
+    ? checkLooseness(snapshot)
+    : [];
   const diagnostics = mode === "check" || mode === "effects"
     ? effectDiagnostics
     : mode === "pass-through"
@@ -54,8 +61,10 @@ function inferEffects(snapshot: ProjectSnapshot): Map<string, Set<Effect>> {
 }
 
 function externalEffects(snapshot: ProjectSnapshot, name: string): Effect[] {
-  const declared = snapshot.externalEffects.get(name);
-  if (declared) return declared;
+  const declared = snapshot.externalEffects instanceof Map
+    ? snapshot.externalEffects.get(name)
+    : undefined;
+  if (Array.isArray(declared)) return declared;
   const effects: Record<string, Effect[]> = {
     fetch: ["io", "async", "may-return-none"],
     readFileSync: ["io", "may-return-none"],
